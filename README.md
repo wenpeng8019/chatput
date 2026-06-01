@@ -1,4 +1,4 @@
-# Remote Voice Input（远程语音输入法）
+# Chatput（聊入）
 
 用手机对着说话，文字实时注入到 Windows/Mac 桌面端「当前焦点输入框」。
 手机端是类 IM 界面：每个桌面输入窗口 = 一个会话，按住说话、抬起发送。
@@ -56,12 +56,12 @@ npm start          # 默认 ws://localhost:8080
 cd desktop-macos
 export PATH="$HOME/.local/bin:$PATH"
 xcodegen generate   # 生成 Xcode 工程（首次或增删文件后）
-xcodebuild -project RemoteInputDesktop.xcodeproj -scheme RemoteInputDesktop \
+xcodebuild -project ChatputDesktop.xcodeproj -scheme ChatputDesktop \
   -configuration Debug -derivedDataPath build \
   CODE_SIGN_IDENTITY="-" CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=NO
-open build/Build/Products/Debug/RemoteInputDesktop.app   # 弹出窗口，显示配对二维码
+open build/Build/Products/Debug/ChatputDesktop.app   # 弹出窗口，显示配对二维码
 ```
-> 首次需在「系统设置 → 隐私与安全性 → 辅助功能」中勾选 RemoteInputDesktop（焦点监控 + 文字注入都依赖）。
+> 首次需在「系统设置 → 隐私与安全性 → 辅助功能」中勾选 ChatputDesktop（焦点监控 + 文字注入都依赖）。
 >
 > 旧 Electron 版仍可用：`cd desktop-electron && npm install && npm start`。
 

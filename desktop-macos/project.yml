@@ -1,6 +1,6 @@
-name: RemoteInputDesktop
+name: ChatputDesktop
 options:
-  bundleIdPrefix: com.remoteinput
+  bundleIdPrefix: com.chatput
   deploymentTarget:
     macOS: "12.0"
   createIntermediateGroups: true
@@ -16,7 +16,7 @@ settings:
     ENABLE_HARDENED_RUNTIME: YES
 
 targets:
-  RemoteInputDesktop:
+  ChatputDesktop:
     type: application
     platform: macOS
     sources:
@@ -24,15 +24,15 @@ targets:
     info:
       path: Sources/Info.plist
       properties:
-        CFBundleDisplayName: 远程语音输入
-        CFBundleName: RemoteInputDesktop
+        CFBundleDisplayName: 聊入
+        CFBundleName: ChatputDesktop
         LSMinimumSystemVersion: "12.0"
         NSHumanReadableCopyright: ""
         LSUIElement: false
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
     entitlements:
-      path: Sources/RemoteInputDesktop.entitlements
+      path: Sources/ChatputDesktop.entitlements
       properties:
         com.apple.security.app-sandbox: false
         com.apple.security.cs.disable-library-validation: true

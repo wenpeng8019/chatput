@@ -1,8 +1,8 @@
 {
-  "name": "remote-input-signaling-server",
+  "name": "chatput-signaling-server",
   "version": "0.1.0",
   "private": true,
-  "description": "WebRTC signaling + pairing server for Remote Voice Input",
+  "description": "WebRTC signaling + pairing server for Chatput",
   "type": "module",
   "main": "src/index.js",
   "scripts": {

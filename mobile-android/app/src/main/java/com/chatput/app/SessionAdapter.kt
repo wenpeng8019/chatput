@@ -1,4 +1,4 @@
-package com.remoteinput.app
+package com.chatput.app
 
 import android.view.LayoutInflater
 import android.view.View

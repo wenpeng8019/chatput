@@ -35,7 +35,7 @@ final class AppState: ObservableObject {
         DispatchQueue.main.async {
             self.logLines.append(line)
             if self.logLines.count > 200 { self.logLines.removeFirst(self.logLines.count - 200) }
-            NSLog("[remote-input] %@", line)
+            NSLog("[chatput] %@", line)
         }
     }
 

@@ -1,5 +1,5 @@
 {
-  "name": "remote-input-desktop",
+  "name": "chatput-desktop",
   "version": "0.1.0",
   "private": true,
   "description": "Electron desktop endpoint: focus monitoring + text injection + WebRTC",

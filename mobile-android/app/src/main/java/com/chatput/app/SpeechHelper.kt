@@ -1,4 +1,4 @@
-package com.remoteinput.app
+package com.chatput.app
 
 import android.annotation.SuppressLint
 import android.content.Context

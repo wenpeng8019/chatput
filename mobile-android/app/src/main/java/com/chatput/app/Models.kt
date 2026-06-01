@@ -1,4 +1,4 @@
-package com.remoteinput.app
+package com.chatput.app
 
 /** 一个会话 = 桌面端的一个输入窗口 */
 data class Session(

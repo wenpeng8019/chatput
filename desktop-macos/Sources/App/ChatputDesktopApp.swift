@@ -1,7 +1,7 @@
 import SwiftUI
 
 @main
-struct RemoteInputDesktopApp: App {
+struct ChatputDesktopApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var state = AppState.shared
 

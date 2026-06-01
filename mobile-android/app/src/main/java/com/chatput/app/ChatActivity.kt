@@ -1,4 +1,4 @@
-package com.remoteinput.app
+package com.chatput.app
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -9,7 +9,7 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
-import com.remoteinput.app.databinding.ActivityChatBinding
+import com.chatput.app.databinding.ActivityChatBinding
 
 /** 聊天界面：按住按钮说话，松开发送识别文本到桌面 */
 class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
@@ -35,7 +35,7 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
             return
         }
 
-        title = session!!.app.ifBlank { "远程输入" }
+        title = session!!.app.ifBlank { "聊入" }
         binding.subtitle.text = session!!.title
 
         adapter = MessageAdapter(session!!.messages)

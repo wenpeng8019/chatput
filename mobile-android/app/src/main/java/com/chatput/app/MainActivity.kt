@@ -1,4 +1,4 @@
-package com.remoteinput.app
+package com.chatput.app
 
 import android.Manifest
 import android.content.Intent
@@ -13,7 +13,7 @@ import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
-import com.remoteinput.app.databinding.ActivityMainBinding
+import com.chatput.app.databinding.ActivityMainBinding
 
 /** 会话列表 + 扫码配对入口 */
 class MainActivity : AppCompatActivity(), ConnectionManager.Observer {

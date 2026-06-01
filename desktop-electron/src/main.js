@@ -21,7 +21,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 420,
     height: 600,
-    title: 'Remote Voice Input',
+    title: 'Chatput',
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,

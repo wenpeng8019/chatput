@@ -1,4 +1,4 @@
-package com.remoteinput.app
+package com.chatput.app
 
 import okhttp3.OkHttpClient
 import okhttp3.Request

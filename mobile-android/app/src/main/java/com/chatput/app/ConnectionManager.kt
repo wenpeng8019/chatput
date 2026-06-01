@@ -1,4 +1,4 @@
-package com.remoteinput.app
+package com.chatput.app
 
 import android.content.Context
 import android.os.Handler
