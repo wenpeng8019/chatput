@@ -16,7 +16,7 @@ final class TextInjector {
         paste()
 
         // 粘贴完成后还原剪贴板。
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + AppConfig.Timing.clipboardRestore) {
             pb.clearContents()
             if let saved = saved { pb.setString(saved, forType: .string) }
         }
@@ -24,7 +24,7 @@ final class TextInjector {
 
     private func paste() {
         let src = CGEventSource(stateID: .combinedSessionState)
-        let vKey: CGKeyCode = 9 // 'v'
+        let vKey = AppConfig.KeyCode.v
         guard let down = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: true),
               let up = CGEvent(keyboardEventSource: src, virtualKey: vKey, keyDown: false) else { return }
         down.flags = .maskCommand
@@ -47,14 +47,14 @@ final class TextInjector {
     func perform(_ action: Action) {
         switch action {
         case .enter:
-            tapKey(36)                      // Return
+            tapKey(AppConfig.KeyCode.return)
         case .backspace:
-            tapKey(51)                      // Delete (backspace)
+            tapKey(AppConfig.KeyCode.delete)
         case .selectAll:
-            tapKey(0, flags: .maskCommand)  // Cmd+A
+            tapKey(AppConfig.KeyCode.a, flags: .maskCommand)   // Cmd+A
         case .clear:
-            tapKey(0, flags: .maskCommand)  // Cmd+A
-            tapKey(51)                      // Delete
+            tapKey(AppConfig.KeyCode.a, flags: .maskCommand)   // Cmd+A
+            tapKey(AppConfig.KeyCode.delete)
         }
     }
 

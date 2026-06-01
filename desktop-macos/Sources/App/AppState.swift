@@ -78,7 +78,9 @@ final class AppState: ObservableObject {
         let line = items.map { "\($0)" }.joined(separator: " ")
         DispatchQueue.main.async {
             self.logLines.append(line)
-            if self.logLines.count > 200 { self.logLines.removeFirst(self.logLines.count - 200) }
+            if self.logLines.count > AppConfig.Limit.logLines {
+                self.logLines.removeFirst(self.logLines.count - AppConfig.Limit.logLines)
+            }
             NSLog("[chatput] %@", line)
         }
     }
@@ -87,7 +89,7 @@ final class AppState: ObservableObject {
         DispatchQueue.main.async {
             if !self.sessions.contains(where: { $0.id == s.id }) {
                 self.sessions.insert(s, at: 0)
-                if self.sessions.count > 30 { self.sessions.removeLast() }
+                if self.sessions.count > AppConfig.Limit.sessions { self.sessions.removeLast() }
             }
         }
     }

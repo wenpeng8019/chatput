@@ -41,7 +41,7 @@ final class Coordinator {
     /// 周期性刷新辅助功能授权状态，授权后 tip 自动消失，无需重启。
     private func startAccessibilityPolling() {
         accessibilityTimer?.invalidate()
-        let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: AppConfig.Timing.accessibilityPoll, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             let trusted = TextInjector.isAccessibilityTrusted()
             if trusted != self.state.accessibilityGranted {
@@ -123,7 +123,7 @@ final class Coordinator {
             self.state.roomCode = ""
             self.state.advertisedURL = ""
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + AppConfig.Timing.restartDebounce) { [weak self] in
             self?.bringUp()
         }
     }
@@ -157,7 +157,7 @@ final class Coordinator {
 
         signaling.onOpen = { [weak self] in
             self?.state.setStatus(zh: "已连接信令，创建房间…", en: "Connected, creating room…", connected: false)
-            self?.signaling.send(["type": "create-room"])
+            self?.signaling.send(["type": Wire.Signal.createRoom])
         }
         signaling.onMessage = { [weak self] msg in
             self?.handleSignalingMessage(msg)
@@ -169,7 +169,7 @@ final class Coordinator {
                 self?.signaling.connect(urlString: self?.settings.hostConnectURL ?? "")
             }
             self.reconnectWorkItem = work
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3, execute: work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + AppConfig.Timing.reconnectDelay, execute: work)
         }
 
         signaling.connect(urlString: url)
@@ -178,7 +178,7 @@ final class Coordinator {
     private func handleSignalingMessage(_ msg: [String: Any]) {
         guard let type = msg["type"] as? String else { return }
         switch type {
-        case "room-created":
+        case Wire.Signal.roomCreated:
             roomId = msg["roomId"] as? String ?? ""
             token = msg["token"] as? String ?? ""
             let advertised = settings.advertisedURL
@@ -197,25 +197,25 @@ final class Coordinator {
             }
             state.log("room created:", roomId, "advertise:", advertised)
 
-        case "peer-joined":
+        case Wire.Signal.peerJoined:
             // 桌面端是 host：手机加入后由我方发起 offer。
-            if (msg["role"] as? String) == "host" {
+            if (msg["role"] as? String) == Wire.Role.host {
                 state.log("guest joined, creating offer")
                 state.setStatus(zh: "配对成功，建立连接…", en: "Paired, establishing connection…", connected: false)
                 webrtc.createConnectionAndOffer()
             }
 
-        case "signal":
+        case Wire.Signal.signal:
             if let data = msg["data"] as? [String: Any] {
                 webrtc.handleRemoteSignal(data)
             }
 
-        case "peer-left":
+        case Wire.Signal.peerLeft:
             state.log("peer left")
             state.setConnectedDevice("")
             state.setStatus(zh: "手机已断开，等待重连…", en: "Phone disconnected, waiting to reconnect…", connected: false)
 
-        case "error":
+        case Wire.Signal.error:
             state.log("signaling error:", msg["reason"] ?? "")
 
         default:

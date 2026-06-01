@@ -45,7 +45,7 @@ final class WebRTCManager: NSObject {
 
         // HOST 创建 DataChannel。
         let dcConfig = RTCDataChannelConfiguration()
-        if let dc = pc.dataChannel(forLabel: "input", configuration: dcConfig) {
+        if let dc = pc.dataChannel(forLabel: Wire.Msg.channelLabel, configuration: dcConfig) {
             dc.delegate = self
             self.channel = dc
         }
@@ -94,7 +94,7 @@ final class WebRTCManager: NSObject {
     /// 把焦点会话推送给手机，让其新建/切换会话。
     func sendSession(_ session: FocusSession) {
         let obj: [String: Any] = [
-            "type": "session",
+            "type": Wire.Msg.session,
             "sessionId": session.id,
             "app": session.app,
             "title": session.title,
@@ -165,11 +165,11 @@ extension WebRTCManager: RTCDataChannelDelegate {
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
         guard let obj = try? JSONSerialization.jsonObject(with: buffer.data) as? [String: Any] else { return }
         switch obj["type"] as? String {
-        case "text":
+        case Wire.Msg.text:
             if let text = obj["text"] as? String { onText?(text) }
-        case "action":
+        case Wire.Msg.action:
             if let action = obj["action"] as? String { onAction?(action) }
-        case "hello":
+        case Wire.Msg.hello:
             if let device = obj["device"] as? String { onDevice?(device) }
         default:
             break

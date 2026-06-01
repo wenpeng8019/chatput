@@ -179,51 +179,51 @@ final class SignalingServer {
     private func handle(_ data: Data, from client: Client) {
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
               let type = obj["type"] as? String else {
-            sendJSON(["type": "error", "reason": "invalid-json"], to: client)
+            sendJSON(["type": Wire.Signal.error, "reason": Wire.Reason.invalidJSON], to: client)
             return
         }
 
         switch type {
-        case "create-room":
+        case Wire.Signal.createRoom:
             let roomId = Self.genId(bytes: 3)   // 短，便于二维码
             let token = Self.genId(bytes: 8)
             let room = Room(token: token)
             room.host = client
             rooms[roomId] = room
             client.roomId = roomId
-            sendJSON(["type": "room-created", "roomId": roomId, "token": token], to: client)
+            sendJSON(["type": Wire.Signal.roomCreated, "roomId": roomId, "token": token], to: client)
 
-        case "join-room":
+        case Wire.Signal.joinRoom:
             guard let roomId = obj["roomId"] as? String, let room = rooms[roomId] else {
-                sendJSON(["type": "error", "reason": "room-not-found"], to: client)
+                sendJSON(["type": Wire.Signal.error, "reason": Wire.Reason.roomNotFound], to: client)
                 return
             }
             guard (obj["token"] as? String) == room.token else {
-                sendJSON(["type": "error", "reason": "bad-token"], to: client)
+                sendJSON(["type": Wire.Signal.error, "reason": Wire.Reason.badToken], to: client)
                 return
             }
             guard room.guest == nil else {
-                sendJSON(["type": "error", "reason": "room-full"], to: client)
+                sendJSON(["type": Wire.Signal.error, "reason": Wire.Reason.roomFull], to: client)
                 return
             }
             room.guest = client
             client.roomId = roomId
-            sendJSON(["type": "peer-joined", "role": "guest"], to: client)
+            sendJSON(["type": Wire.Signal.peerJoined, "role": Wire.Role.guest], to: client)
             if let host = room.host {
-                sendJSON(["type": "peer-joined", "role": "host"], to: host)
+                sendJSON(["type": Wire.Signal.peerJoined, "role": Wire.Role.host], to: host)
             }
 
-        case "signal":
+        case Wire.Signal.signal:
             guard let roomId = client.roomId, let room = rooms[roomId] else {
-                sendJSON(["type": "error", "reason": "not-in-room"], to: client)
+                sendJSON(["type": Wire.Signal.error, "reason": Wire.Reason.notInRoom], to: client)
                 return
             }
             if let peer = otherPeer(in: room, of: client), let data = obj["data"] {
-                sendJSON(["type": "signal", "data": data], to: peer)
+                sendJSON(["type": Wire.Signal.signal, "data": data], to: peer)
             }
 
         default:
-            sendJSON(["type": "error", "reason": "unknown-type"], to: client)
+            sendJSON(["type": Wire.Signal.error, "reason": Wire.Reason.unknownType], to: client)
         }
     }
 
@@ -236,7 +236,7 @@ final class SignalingServer {
         if room.host === client { room.host = nil }
         if room.guest === client { room.guest = nil }
         if let peer = peer {
-            sendJSON(["type": "peer-left"], to: peer)
+            sendJSON(["type": Wire.Signal.peerLeft], to: peer)
         }
         if room.host == nil && room.guest == nil {
             rooms.removeValue(forKey: roomId)

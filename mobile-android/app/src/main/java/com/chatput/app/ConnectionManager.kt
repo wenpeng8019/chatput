@@ -35,6 +35,9 @@ object ConnectionManager : SignalingClient.Listener {
     private val observers = mutableSetOf<Observer>()
 
     val sessions = mutableListOf<Session>()
+    /** 桌面端当前聚焦的会话 id（焦点切换时由桌面端通知）。 */
+    var activeSessionId: String? = null
+        private set
     var status: String = "未连接"
         private set
     val isConnected: Boolean
@@ -245,12 +248,19 @@ object ConnectionManager : SignalingClient.Listener {
 
     private fun upsertSession(msg: JSONObject) {
         val id = msg.getString("sessionId")
-        if (sessions.none { it.id == id }) {
+        val existing = sessions.firstOrNull { it.id == id }
+        if (existing == null) {
             sessions.add(
                 0,
                 Session(id, msg.optString("app"), msg.optString("title"))
             )
+        } else if (sessions.indexOf(existing) != 0) {
+            // 桌面端重新聚焦该窗口，置顶以突出当前焦点
+            sessions.remove(existing)
+            sessions.add(0, existing)
         }
+        // 桌面端焦点所在的会话即为当前激活会话
+        activeSessionId = id
         notifySessions()
     }
 
@@ -287,6 +297,7 @@ object ConnectionManager : SignalingClient.Listener {
         pc = null
         signaling = null
         sessions.clear()
+        activeSessionId = null
         setStatus("未连接", false)
     }
 }
