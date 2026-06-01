@@ -1,0 +1,18 @@
+{
+  "name": "remote-input-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron desktop endpoint: focus monitoring + text injection + WebRTC",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "active-win": "^8.2.1",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

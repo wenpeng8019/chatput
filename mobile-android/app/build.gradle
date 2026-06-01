@@ -1,0 +1,67 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.remoteinput.app'
+    compileSdk 31
+
+    defaultConfig {
+        applicationId 'com.remoteinput.app'
+        minSdk 24
+        targetSdk 31
+        versionCode 1
+        versionName '1.0'
+
+        // 仅打包 arm64，缩小体积（真机基本都是 arm64-v8a）
+        ndk {
+            abiFilters 'arm64-v8a'
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+
+    kotlinOptions {
+        jvmTarget = '1.8'
+    }
+
+    buildFeatures {
+        viewBinding true
+    }
+
+    // 模型 onnx/txt 文件不要压缩，sherpa-onnx 需要直接 mmap 读取
+    androidResources {
+        noCompress 'onnx', 'txt', 'json'
+    }
+}
+
+dependencies {
+    // sherpa-onnx 离线语音识别（本地 AAR，含 arm64 原生库）
+    implementation fileTree(dir: 'libs', include: ['*.aar'])
+
+    implementation 'androidx.core:core-ktx:1.7.0'
+    implementation 'androidx.appcompat:appcompat:1.4.2'
+    implementation 'com.google.android.material:material:1.6.1'
+    implementation 'androidx.recyclerview:recyclerview:1.2.1'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
+    implementation 'androidx.activity:activity-ktx:1.4.0'
+
+    // WebRTC（P2P DataChannel），标准 org.webrtc API
+    implementation 'io.getstream:stream-webrtc-android:1.1.1'
+
+    // WebSocket 信令
+    implementation 'com.squareup.okhttp3:okhttp:4.11.0'
+
+    // 二维码扫描配对
+    implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
+}

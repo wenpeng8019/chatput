@@ -1,0 +1,37 @@
+# ===== 通用 =====
+.DS_Store
+*.log
+*.tmp
+.env
+.env.local
+
+# ===== Node (signaling-server, desktop-electron) =====
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# ===== Android (mobile-android) =====
+mobile-android/.gradle/
+mobile-android/build/
+mobile-android/app/build/
+mobile-android/local.properties
+*.apk
+*.aab
+*.iml
+.idea/
+
+# ===== macOS 原生 (desktop-macos) =====
+desktop-macos/build/
+desktop-macos/DerivedData/
+# XcodeGen 生成的工程，不入库（由 project.yml 生成）
+desktop-macos/*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+
+# ===== 大体积 vendored 二进制（需另行下载，见各端 README）=====
+# sherpa-onnx ASR AAR（~54MB）
+mobile-android/app/libs/sherpa-onnx.aar
+# sherpa-onnx 离线语音模型（~228MB，超 GitHub 100MB 限制）
+mobile-android/app/src/main/assets/sherpa-onnx-*/*.onnx
+# WebRTC 预编译框架（M125，~26MB+）
+desktop-macos/Frameworks/WebRTC.xcframework/

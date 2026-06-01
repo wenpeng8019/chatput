@@ -1,0 +1,15 @@
+{
+  "name": "remote-input-signaling-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WebRTC signaling + pairing server for Remote Voice Input",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
