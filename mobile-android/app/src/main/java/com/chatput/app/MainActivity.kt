@@ -78,7 +78,8 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
         val options = ScanOptions().apply {
             setPrompt("扫描桌面端二维码配对")
             setBeepEnabled(false)
-            setOrientationLocked(false)
+            setOrientationLocked(true)
+            captureActivity = PortraitCaptureActivity::class.java
         }
         scanLauncher.launch(options)
     }

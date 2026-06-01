@@ -233,6 +233,10 @@ final class Coordinator {
             self?.state.setStatus(zh: "P2P 已连接 ✅", en: "P2P connected ✅", connected: true)
             self?.focus.start()
         }
+        // DataChannel 真正可发时补发当前焦点会话（首次连通瞬间通道可能尚未 open）。
+        webrtc.onChannelOpen = { [weak self] in
+            self?.focus.resendCurrent()
+        }
         webrtc.onText = { [weak self] text in
             self?.state.log("recv text:", text)
             self?.injector.inject(text)

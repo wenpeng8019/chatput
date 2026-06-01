@@ -40,10 +40,10 @@
         android:textColor="#98A2B3"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/action_bar" />
+        app:layout_constraintBottom_toTopOf="@id/action_buttons" />
 
     <LinearLayout
-        android:id="@+id/action_bar"
+        android:id="@+id/action_buttons"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
         android:orientation="horizontal"

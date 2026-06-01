@@ -9,6 +9,7 @@ final class FocusMonitor {
     private var observer: AXObserver?
     private var observedPID: pid_t = 0
     private var lastKey = ""
+    private var monitoring = false
     private var ownBundleId = Bundle.main.bundleIdentifier ?? ""
 
     private let notifications: [String] = [
@@ -19,6 +20,8 @@ final class FocusMonitor {
     ]
 
     func start() {
+        guard !monitoring else { emitCurrent(); return }
+        monitoring = true
         let nc = NSWorkspace.shared.notificationCenter
         nc.addObserver(self,
                        selector: #selector(activeAppChanged(_:)),
@@ -27,6 +30,13 @@ final class FocusMonitor {
         if let app = NSWorkspace.shared.frontmostApplication {
             attach(to: app)
         }
+    }
+
+    /// 强制重新发出当前焦点会话（忽略去重）。
+    /// 用于 DataChannel 刚建立时补发——首次连通瞬间通道可能尚未 open，首个会话会被丢弃。
+    func resendCurrent() {
+        lastKey = ""
+        emitCurrent()
     }
 
     @objc private func activeAppChanged(_ note: Notification) {

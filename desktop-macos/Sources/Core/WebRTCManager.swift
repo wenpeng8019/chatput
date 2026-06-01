@@ -8,6 +8,8 @@ final class WebRTCManager: NSObject {
     /// 需要经信令转发给对端的本地信令（{sdp:...} 或 {candidate:...}）。
     var onLocalSignal: (([String: Any]) -> Void)?
     var onConnected: (() -> Void)?
+    /// DataChannel 真正 open（可发送）时触发，用于补发首个会话。
+    var onChannelOpen: (() -> Void)?
     var onText: ((String) -> Void)?
     /// 收到手机的操作指令（回车/回退/全选/清空）。
     var onAction: ((String) -> Void)?
@@ -159,6 +161,7 @@ extension WebRTCManager: RTCDataChannelDelegate {
         onLog?("datachannel state: \(dataChannel.readyState.rawValue)")
         if dataChannel.readyState == .open {
             onConnected?()
+            onChannelOpen?()
         }
     }
 
