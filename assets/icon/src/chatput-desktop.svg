@@ -1,0 +1,50 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Chatput · 桌面端图标：键盘在前（上），圆形聊天气泡在后（下），尾巴漏出 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EEF1F5"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2B7CD3"/>
+      <stop offset="1" stop-color="#0A559B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 背景 squircle，浅灰白 -->
+  <rect x="0" y="0" width="1024" height="1024" rx="229" fill="url(#bg)"/>
+
+  <!-- 图形整体水平镜像（绕中心 x=512），背景不翻转 -->
+  <g transform="translate(1024 0) scale(-1 1)">
+  <!-- 后层：聊天气泡（圆角矩形+尾巴，单一路径，尾巴朝下） -->
+  <g fill="url(#blue)">
+    <path d="M263 417 H475 A100 100 0 0 1 575 517 V653 A100 100 0 0 1 475 753 H373 L277 829 L277 753 H263 A100 100 0 0 1 163 653 V517 A100 100 0 0 1 263 417 Z"/>
+  </g>
+
+  <!-- 前层：键盘（蓝面板 + 白键），等宽描边护城河与气泡分离 -->
+  <g transform="translate(381 195)">
+    <!-- 护城河：等宽描边 -->
+    <rect x="0" y="0" width="480" height="300" rx="60" fill="none" stroke="#EEF1F5" stroke-width="40"/>
+    <!-- 蓝色面板 -->
+    <rect x="0" y="0" width="480" height="300" rx="60" fill="url(#blue)"/>
+    <g fill="#FFFFFF">
+      <!-- 第一排 -->
+      <circle cx="74"  cy="78"  r="20"/>
+      <circle cx="142" cy="78"  r="20"/>
+      <circle cx="210" cy="78"  r="20"/>
+      <circle cx="278" cy="78"  r="20"/>
+      <circle cx="346" cy="78"  r="20"/>
+      <circle cx="414" cy="78"  r="20"/>
+      <!-- 第二排 -->
+      <circle cx="74"  cy="148" r="20"/>
+      <circle cx="142" cy="148" r="20"/>
+      <circle cx="210" cy="148" r="20"/>
+      <circle cx="278" cy="148" r="20"/>
+      <circle cx="346" cy="148" r="20"/>
+      <circle cx="414" cy="148" r="20"/>
+      <!-- 空格键 -->
+      <rect x="130" y="216" width="220" height="36" rx="18"/>
+    </g>
+  </g>
+  </g>
+</svg>

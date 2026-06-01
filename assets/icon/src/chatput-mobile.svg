@@ -1,0 +1,53 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <!-- Chatput · 手机端图标：圆形聊天气泡在前，键盘在后，微信式重叠 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#EEF1F5"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="0" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2B7CD3"/>
+      <stop offset="1" stop-color="#0A559B"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 背景 squircle，浅灰白 -->
+  <rect x="0" y="0" width="1024" height="1024" rx="229" fill="url(#bg)"/>
+
+  <!-- 后层：键盘（蓝面板 + 白键），偏右上 -->
+  <g transform="translate(381 195)">
+    <rect x="0" y="0" width="480" height="300" rx="60" fill="url(#blue)"/>
+    <g fill="#FFFFFF">
+      <circle cx="74"  cy="78"  r="20"/>
+      <circle cx="142" cy="78"  r="20"/>
+      <circle cx="210" cy="78"  r="20"/>
+      <circle cx="278" cy="78"  r="20"/>
+      <circle cx="346" cy="78"  r="20"/>
+      <circle cx="414" cy="78"  r="20"/>
+      <circle cx="74"  cy="148" r="20"/>
+      <circle cx="142" cy="148" r="20"/>
+      <circle cx="210" cy="148" r="20"/>
+      <circle cx="278" cy="148" r="20"/>
+      <circle cx="346" cy="148" r="20"/>
+      <circle cx="414" cy="148" r="20"/>
+      <rect x="130" y="216" width="220" height="36" rx="18"/>
+    </g>
+  </g>
+
+  <!-- 前层：聊天气泡（微信式圆角矩形）+ 语音波形，带背景色护城河 -->
+  <g>
+    <!-- 气泡（圆角矩形 + 尾巴）合并为单一路径，用描边生成均匀护城河 -->
+    <path d="M263 417 H475 A100 100 0 0 1 575 517 V653 A100 100 0 0 1 475 753 H373 L277 829 L277 753 H263 A100 100 0 0 1 163 653 V517 A100 100 0 0 1 263 417 Z"
+          fill="none" stroke="#EEF1F5" stroke-width="40" stroke-linejoin="round"/>
+    <path d="M263 417 H475 A100 100 0 0 1 575 517 V653 A100 100 0 0 1 475 753 H373 L277 829 L277 753 H263 A100 100 0 0 1 163 653 V517 A100 100 0 0 1 263 417 Z"
+          fill="url(#blue)"/>
+    <!-- 白色语音波形 -->
+    <g fill="#FFFFFF" transform="translate(369 585)">
+      <rect x="-104" y="-40" width="26" height="80"  rx="13"/>
+      <rect x="-58"  y="-70" width="26" height="140" rx="13"/>
+      <rect x="-12"  y="-92" width="26" height="184" rx="13"/>
+      <rect x="34"   y="-70" width="26" height="140" rx="13"/>
+      <rect x="80"   y="-40" width="26" height="80"  rx="13"/>
+    </g>
+  </g>
+</svg>

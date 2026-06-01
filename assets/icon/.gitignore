@@ -1,0 +1,2 @@
+# 图标生成产物（由 generate.sh 根据 src/*.svg 重新生成，无需入库）
+build/

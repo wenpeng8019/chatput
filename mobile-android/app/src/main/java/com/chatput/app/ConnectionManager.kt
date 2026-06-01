@@ -189,10 +189,12 @@ object ConnectionManager : SignalingClient.Listener {
         dc.registerObserver(object : DataChannel.Observer {
             override fun onBufferedAmountChange(previousAmount: Long) {}
             override fun onStateChange() {
+                val open = dc.state() == DataChannel.State.OPEN
                 setStatus(
-                    if (dc.state() == DataChannel.State.OPEN) "P2P 已连接" else status,
-                    dc.state() == DataChannel.State.OPEN
+                    if (open) "P2P 已连接" else status,
+                    open
                 )
+                if (open) sendHello()
             }
 
             override fun onMessage(buffer: DataChannel.Buffer) {
@@ -202,6 +204,32 @@ object ConnectionManager : SignalingClient.Listener {
                 handleChannelMessage(text)
             }
         })
+    }
+
+    /** 连接建立后上报本机设备名，供桌面端区分多设备。 */
+    private fun sendHello() {
+        val json = JSONObject()
+            .put("type", "hello")
+            .put("device", deviceName())
+        sendJson(json)
+    }
+
+    private fun deviceName(): String {
+        val ctx = appContext
+        val custom = ctx?.let {
+            try {
+                android.provider.Settings.Global.getString(it.contentResolver, "device_name")
+            } catch (e: Exception) { null }
+        }
+        if (!custom.isNullOrBlank()) return custom
+        val manufacturer = android.os.Build.MANUFACTURER?.replaceFirstChar { c -> c.uppercase() } ?: ""
+        val model = android.os.Build.MODEL ?: "Android"
+        return if (model.startsWith(manufacturer, ignoreCase = true)) model else "$manufacturer $model".trim()
+    }
+
+    private fun sendJson(json: JSONObject) {
+        val buffer = ByteBuffer.wrap(json.toString().toByteArray(StandardCharsets.UTF_8))
+        dataChannel?.send(DataChannel.Buffer(buffer, false))
     }
 
     private fun handleChannelMessage(text: String) {
@@ -239,6 +267,16 @@ object ConnectionManager : SignalingClient.Listener {
         val m = ChatMessage(text, fromMe = true)
         session.messages.add(m)
         main.post { observers.forEach { it.onMessage(session.id, m) } }
+    }
+
+    /** 发送操作指令到桌面：enter / backspace / selectAll / clear。 */
+    fun sendAction(session: Session, action: String) {
+        if (!isConnected) return
+        val json = JSONObject()
+            .put("type", "action")
+            .put("action", action)
+            .put("sessionId", session.id)
+        sendJson(json)
     }
 
     fun disconnect() {

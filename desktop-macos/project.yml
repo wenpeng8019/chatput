@@ -14,6 +14,7 @@ settings:
     CODE_SIGN_STYLE: Automatic
     # 不开沙盒：需要全局辅助功能(AXObserver)与事件注入(CGEvent)，沙盒会禁止。
     ENABLE_HARDENED_RUNTIME: YES
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
 
 targets:
   ChatputDesktop:
@@ -24,13 +25,14 @@ targets:
     info:
       path: Sources/Info.plist
       properties:
-        CFBundleDisplayName: 聊入
-        CFBundleName: ChatputDesktop
+        CFBundleDisplayName: Chatput
+        CFBundleName: Chatput
         LSMinimumSystemVersion: "12.0"
         NSHumanReadableCopyright: ""
-        LSUIElement: false
+        LSUIElement: true
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
+        NSLocalNetworkUsageDescription: "聊入需要局域网访问，以便在本机运行信令服务器并与手机配对。"
     entitlements:
       path: Sources/ChatputDesktop.entitlements
       properties:
@@ -41,6 +43,7 @@ targets:
         embed: true
     settings:
       base:
+        PRODUCT_NAME: Chatput
         LD_RUNPATH_SEARCH_PATHS:
           - "$(inherited)"
           - "@executable_path/../Frameworks"

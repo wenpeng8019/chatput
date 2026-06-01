@@ -9,6 +9,10 @@ final class WebRTCManager: NSObject {
     var onLocalSignal: (([String: Any]) -> Void)?
     var onConnected: (() -> Void)?
     var onText: ((String) -> Void)?
+    /// 收到手机的操作指令（回车/回退/全选/清空）。
+    var onAction: ((String) -> Void)?
+    /// 收到手机上报的设备名。
+    var onDevice: ((String) -> Void)?
     var onLog: ((String) -> Void)?
 
     private static let factory: RTCPeerConnectionFactory = {
@@ -104,6 +108,14 @@ final class WebRTCManager: NSObject {
               let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
         channel.sendData(RTCDataBuffer(data: data, isBinary: false))
     }
+
+    /// 关闭当前连接与通道（重连/切换配置时调用）。
+    func close() {
+        channel?.close()
+        channel = nil
+        pc?.close()
+        pc = nil
+    }
 }
 
 // MARK: - RTCPeerConnectionDelegate
@@ -152,8 +164,15 @@ extension WebRTCManager: RTCDataChannelDelegate {
 
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
         guard let obj = try? JSONSerialization.jsonObject(with: buffer.data) as? [String: Any] else { return }
-        if (obj["type"] as? String) == "text", let text = obj["text"] as? String {
-            onText?(text)
+        switch obj["type"] as? String {
+        case "text":
+            if let text = obj["text"] as? String { onText?(text) }
+        case "action":
+            if let action = obj["action"] as? String { onAction?(action) }
+        case "hello":
+            if let device = obj["device"] as? String { onDevice?(device) }
+        default:
+            break
         }
     }
 }

@@ -40,7 +40,75 @@
         android:textColor="#98A2B3"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/btn_talk" />
+        app:layout_constraintBottom_toTopOf="@id/action_bar" />
+
+    <LinearLayout
+        android:id="@+id/action_bar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingHorizontal="12dp"
+        android:paddingBottom="6dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/btn_talk">
+
+        <Button
+            android:id="@+id/btn_enter"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="6dp"
+            android:minWidth="0dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:paddingHorizontal="4dp"
+            android:textSize="13sp"
+            android:text="回车" />
+
+        <Button
+            android:id="@+id/btn_backspace"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="6dp"
+            android:minWidth="0dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:paddingHorizontal="4dp"
+            android:textSize="13sp"
+            android:text="回退" />
+
+        <Button
+            android:id="@+id/btn_select_all"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:layout_marginEnd="6dp"
+            android:minWidth="0dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:paddingHorizontal="4dp"
+            android:textSize="13sp"
+            android:text="全选" />
+
+        <Button
+            android:id="@+id/btn_clear"
+            style="?attr/materialButtonOutlinedStyle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:minWidth="0dp"
+            android:insetTop="0dp"
+            android:insetBottom="0dp"
+            android:paddingHorizontal="4dp"
+            android:textSize="13sp"
+            android:text="清空" />
+
+    </LinearLayout>
 
     <Button
         android:id="@+id/btn_talk"

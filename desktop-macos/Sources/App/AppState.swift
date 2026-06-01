@@ -14,6 +14,9 @@ final class AppState: ObservableObject {
     static let shared = AppState()
 
     @Published var status: String = "启动中…"
+    /// 状态的中英文原文，用于切换语言时即时重新翻译。
+    @Published var statusZh: String = "启动中…"
+    @Published var statusEn: String = "Starting…"
     @Published var connected: Bool = false
     @Published var roomCode: String = ""
     @Published var qrImage: NSImage? = nil
@@ -21,14 +24,55 @@ final class AppState: ObservableObject {
     @Published var sessions: [FocusSession] = []
     @Published var logLines: [String] = []
 
+    /// 内置信令服务器是否正在运行（仅本地内置模式有意义）。
+    @Published var serverRunning: Bool = false
+    /// 内置信令服务器实际监听端口。
+    @Published var serverPort: UInt16 = 0
+    /// 当前写入二维码、供手机连接的地址。
+    @Published var advertisedURL: String = ""
+    /// 用户是否希望服务处于运行状态（启停开关）。
+    @Published var serviceActive: Bool = false
+    /// 当前已连接手机的设备名（空表示未知或未连接）。
+    @Published var connectedDevice: String = ""
+
     private init() {}
+
+    func setConnectedDevice(_ name: String) {
+        DispatchQueue.main.async { self.connectedDevice = name }
+    }
+
+    func setServiceActive(_ active: Bool) {
+        DispatchQueue.main.async { self.serviceActive = active }
+    }
+
+    func setServerState(running: Bool, port: UInt16) {
+        DispatchQueue.main.async {
+            self.serverRunning = running
+            self.serverPort = port
+        }
+    }
 
     func setStatus(_ text: String, connected: Bool) {
         DispatchQueue.main.async {
             self.status = text
+            self.statusZh = text
+            self.statusEn = text
             self.connected = connected
         }
     }
+
+    /// 以中英文原文设置状态，渲染时按当前语言翻译（见 `statusText`）。
+    func setStatus(zh: String, en: String, connected: Bool) {
+        DispatchQueue.main.async {
+            self.statusZh = zh
+            self.statusEn = en
+            self.status = L.t(zh, en)
+            self.connected = connected
+        }
+    }
+
+    /// 当前语言下的状态文案。
+    var statusText: String { L.t(statusZh, statusEn) }
 
     func log(_ items: Any...) {
         let line = items.map { "\($0)" }.joined(separator: " ")

@@ -58,6 +58,19 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
                 else -> false
             }
         }
+
+        binding.btnEnter.setOnClickListener { sendAction("enter") }
+        binding.btnBackspace.setOnClickListener { sendAction("backspace") }
+        binding.btnSelectAll.setOnClickListener { sendAction("selectAll") }
+        binding.btnClear.setOnClickListener { sendAction("clear") }
+    }
+
+    private fun sendAction(action: String) {
+        if (!ConnectionManager.isConnected) {
+            Toast.makeText(this, "未连接到桌面端", Toast.LENGTH_SHORT).show()
+            return
+        }
+        session?.let { ConnectionManager.sendAction(it, action) }
     }
 
     override fun onResume() {

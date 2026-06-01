@@ -33,6 +33,42 @@ final class TextInjector {
         up.post(tap: .cgAnnotatedSessionEventTap)
     }
 
+    // MARK: - 动作注入
+
+    /// 支持的操作按键。
+    enum Action: String {
+        case enter      // 回车（触发执行/换行）
+        case backspace  // 退格（删除前一个字符）
+        case selectAll  // 全选（Cmd+A）
+        case clear      // 清空输入（全选 + 退格）
+    }
+
+    /// 执行一个操作。
+    func perform(_ action: Action) {
+        switch action {
+        case .enter:
+            tapKey(36)                      // Return
+        case .backspace:
+            tapKey(51)                      // Delete (backspace)
+        case .selectAll:
+            tapKey(0, flags: .maskCommand)  // Cmd+A
+        case .clear:
+            tapKey(0, flags: .maskCommand)  // Cmd+A
+            tapKey(51)                      // Delete
+        }
+    }
+
+    /// 模拟一次按键（按下 + 抬起），可带修饰键。
+    private func tapKey(_ keyCode: CGKeyCode, flags: CGEventFlags = []) {
+        let src = CGEventSource(stateID: .combinedSessionState)
+        guard let down = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: true),
+              let up = CGEvent(keyboardEventSource: src, virtualKey: keyCode, keyDown: false) else { return }
+        down.flags = flags
+        up.flags = flags
+        down.post(tap: .cgAnnotatedSessionEventTap)
+        up.post(tap: .cgAnnotatedSessionEventTap)
+    }
+
     // MARK: - 权限
 
     static func isAccessibilityTrusted() -> Bool {
