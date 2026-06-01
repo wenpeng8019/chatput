@@ -29,7 +29,18 @@
 | `mobile-android/` | 原生 Android App（Kotlin + sherpa-onnx 离线语音识别） | Android SDK/JDK |
 | `mobile-iphone/` | iOS 手机端（计划中，占位） | — |
 
-> ⚠️ 大体积二进制（语音模型、WebRTC/sherpa-onnx 框架）未入库，见 `.gitignore`，需按各端 README 另行下载。
+> ⚠️ 大体积二进制（语音模型、WebRTC/sherpa-onnx 框架）未入库，见 `.gitignore`。
+
+## 下载依赖（克隆后首次必做）
+
+大体积二进制依赖通过脚本下载（详见脚本头部说明）：
+```bash
+./scripts/fetch-deps.sh            # 全部（Android AAR+模型 + macOS WebRTC）
+./scripts/fetch-deps.sh android    # 仅 Android
+./scripts/fetch-deps.sh macos      # 仅 macOS
+USE_MIRROR=1 ./scripts/fetch-deps.sh   # 中国大陆走 ghfast.top 代理加速
+```
+脚本幂等：已存在的文件自动跳过，`FORCE=1` 可强制重下。
 
 ## 快速开始（Phase 0：打通最小链路）
 
