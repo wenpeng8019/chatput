@@ -106,6 +106,14 @@ final class WebRTCManager: NSObject {
         sendMessage(obj)
     }
 
+    /// 通知手机移除一个已经关闭的桌面窗口会话。
+    func sendSessionClosed(sessionId: String) {
+        sendMessage([
+            "type": Wire.Msg.sessionClosed,
+            "sessionId": sessionId,
+        ])
+    }
+
     func sendMessage(_ obj: [String: Any]) {
         guard let channel = channel, channel.readyState == .open,
               let data = try? JSONSerialization.data(withJSONObject: obj) else { return }

@@ -20,6 +20,8 @@ enum Wire {
 
         /// 桌面 → 手机：推送当前聚焦的输入会话。
         static let session = "session"
+        /// 桌面 → 手机：已上报过的输入窗口关闭，移除对应会话。
+        static let sessionClosed = "session-closed"
         /// 手机 → 桌面：识别得到的文本。
         static let text = "text"
         /// 手机 → 桌面：操作指令（回车/退格/全选/清空）。

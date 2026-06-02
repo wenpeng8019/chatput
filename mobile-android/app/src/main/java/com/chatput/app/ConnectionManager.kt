@@ -52,10 +52,7 @@ object ConnectionManager : SignalingClient.Listener {
     var status: String = "未连接"
         private set
     val isConnected: Boolean
-        get() = when (transportMode) {
-            TransportMode.WEBRTC -> dataChannel?.state() == DataChannel.State.OPEN
-            TransportMode.WEBSOCKET -> signalingReady
-        }
+        get() = connectedState
 
     private var factory: PeerConnectionFactory? = null
     private var pc: PeerConnection? = null
@@ -64,6 +61,7 @@ object ConnectionManager : SignalingClient.Listener {
     private var appContext: Context? = null
     private var transportMode = TransportMode.WEBRTC
     private var signalingReady = false
+    private var connectedState = false
 
     private val iceServers = listOf(
         PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
@@ -79,6 +77,7 @@ object ConnectionManager : SignalingClient.Listener {
 
     private fun setStatus(s: String, connected: Boolean = isConnected) {
         status = s
+        connectedState = connected
         main.post { observers.forEach { it.onStatus(s, connected) } }
     }
 
@@ -111,6 +110,8 @@ object ConnectionManager : SignalingClient.Listener {
         val roomId = data.getString("roomId")
         val token = data.getString("token")
         transportMode = TransportMode.from(data.optString("transport", "webrtc"))
+        connectedState = false
+        signalingReady = false
 
         lastPairedRoomId = roomId
         savePairing(context, qrPayload, roomId)
@@ -248,12 +249,12 @@ object ConnectionManager : SignalingClient.Listener {
     }
 
     override fun onPeerLeft() {
-        signalingReady = false
-        setStatus("桌面端已断开", false)
+        handleRemoteDisconnected("桌面端已断开")
     }
 
     override fun onError(reason: String) {
         signalingReady = false
+        clearSessions()
         if (removeLastPairingIfExpired(reason)) {
             setStatus("历史连接已失效，请重新扫码", false)
         } else {
@@ -262,8 +263,7 @@ object ConnectionManager : SignalingClient.Listener {
     }
 
     override fun onClosed() {
-        signalingReady = false
-        setStatus("桌面断开", false)
+        handleRemoteDisconnected("桌面断开")
     }
 
     // --- WebRTC ------------------------------------------------------------
@@ -282,8 +282,12 @@ object ConnectionManager : SignalingClient.Listener {
             }
 
             override fun onConnectionChange(newState: PeerConnection.PeerConnectionState) {
-                if (newState == PeerConnection.PeerConnectionState.CONNECTED) {
-                    setStatus("P2P 已连接", true)
+                when (newState) {
+                    PeerConnection.PeerConnectionState.CONNECTED -> setStatus("P2P 已连接", true)
+                    PeerConnection.PeerConnectionState.DISCONNECTED,
+                    PeerConnection.PeerConnectionState.FAILED,
+                    PeerConnection.PeerConnectionState.CLOSED -> handleRemoteDisconnected("桌面断开")
+                    else -> Unit
                 }
             }
 
@@ -314,12 +318,16 @@ object ConnectionManager : SignalingClient.Listener {
         dc.registerObserver(object : DataChannel.Observer {
             override fun onBufferedAmountChange(previousAmount: Long) {}
             override fun onStateChange() {
-                val open = dc.state() == DataChannel.State.OPEN
+                val state = dc.state()
+                val open = state == DataChannel.State.OPEN
                 setStatus(
                     if (open) "P2P 已连接" else status,
                     open
                 )
                 if (open) sendHello()
+                if (state == DataChannel.State.CLOSING || state == DataChannel.State.CLOSED) {
+                    handleRemoteDisconnected("桌面断开")
+                }
             }
 
             override fun onMessage(buffer: DataChannel.Buffer) {
@@ -371,8 +379,9 @@ object ConnectionManager : SignalingClient.Listener {
     }
 
     private fun handlePeerMessage(msg: JSONObject) {
-        if (msg.optString("type") == "session") {
-            upsertSession(msg)
+        when (msg.optString("type")) {
+            "session" -> upsertSession(msg)
+            "session-closed" -> removeSession(msg.optString("sessionId"))
         }
     }
 
@@ -394,6 +403,32 @@ object ConnectionManager : SignalingClient.Listener {
         // 桌面端焦点所在的会话即为当前激活会话
         activeSessionId = id
         notifySessions()
+    }
+
+    private fun removeSession(id: String) {
+        if (id.isBlank()) return
+        val removed = sessions.removeAll { it.id == id }
+        if (!removed) return
+        if (activeSessionId == id) {
+            activeSessionId = sessions.firstOrNull()?.id
+        }
+        notifySessions()
+    }
+
+    private fun handleRemoteDisconnected(message: String) {
+        signalingReady = false
+        connectedState = false
+        dataChannel = null
+        pc = null
+        clearSessions()
+        setStatus(message, false)
+    }
+
+    private fun clearSessions() {
+        val changed = sessions.isNotEmpty() || activeSessionId != null
+        sessions.clear()
+        activeSessionId = null
+        if (changed) notifySessions()
     }
 
     /** 发送识别文本到桌面，并记入会话历史 */
@@ -438,11 +473,10 @@ object ConnectionManager : SignalingClient.Listener {
         pc = null
         signaling = null
         signalingReady = false
+        connectedState = false
         transportMode = TransportMode.WEBRTC
-        sessions.clear()
-        activeSessionId = null
+        clearSessions()
         setStatus("未连接", false)
-        notifySessions()
     }
 }
 

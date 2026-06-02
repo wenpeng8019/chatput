@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Chatput" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/chatput_accent</item>
+        <item name="colorPrimaryVariant">@color/chatput_accent_strong</item>
+        <item name="colorSecondary">@color/chatput_accent</item>
+        <item name="colorSurface">@color/chatput_surface</item>
+        <item name="android:colorBackground">@color/chatput_bg</item>
+        <item name="android:windowBackground">@color/chatput_bg</item>
+        <item name="colorOnPrimary">@color/chatput_on_accent</item>
+        <item name="colorOnSurface">@color/chatput_text_primary</item>
+        <item name="colorOnBackground">@color/chatput_text_primary</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:navigationBarColor">@color/chatput_bg</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:forceDarkAllowed">false</item>
+        <item name="materialButtonStyle">@style/Chatput.Button</item>
+    </style>
+</resources>

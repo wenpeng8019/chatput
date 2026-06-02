@@ -5,12 +5,16 @@ import ApplicationServices
 /// 监听应用切换 + 每个应用内部的「聚焦窗口/聚焦元素」变化，焦点变了就回调一个会话。
 final class FocusMonitor {
     var onSession: ((FocusSession) -> Void)?
+    var onSessionClosed: ((String) -> Void)?
 
     private var observer: AXObserver?
     private var observedPID: pid_t = 0
     private var lastKey = ""
     private var monitoring = false
     private var ownBundleId = Bundle.main.bundleIdentifier ?? ""
+    private let finderBundleId = "com.apple.finder"
+    private var knownSessions: [String: String] = [:] // sessionId -> appName
+    private var windowExistenceTimer: Timer?
 
     private let notifications: [String] = [
         kAXFocusedUIElementChangedNotification,
@@ -30,6 +34,7 @@ final class FocusMonitor {
         if let app = NSWorkspace.shared.frontmostApplication {
             attach(to: app)
         }
+        startWindowExistencePolling()
     }
 
     /// 强制重新发出当前焦点会话（忽略去重）。
@@ -102,11 +107,16 @@ final class FocusMonitor {
 
         let appName = app.localizedName ?? "Unknown"
         let title = focusedWindowTitle(pid: app.processIdentifier)
+        if app.bundleIdentifier == finderBundleId && title.isEmpty {
+            // 点击系统桌面时前台应用会变成 Finder，但它不是一个可输入目标。
+            return
+        }
         let key = "\(appName)|\(title)"
         guard key != lastKey else { return }
         lastKey = key
 
         onSession?(FocusSession(id: key, app: appName, title: title, ts: Date().timeIntervalSince1970 * 1000))
+        knownSessions[key] = appName
     }
 
     private func focusedWindowTitle(pid: pid_t) -> String {
@@ -125,7 +135,72 @@ final class FocusMonitor {
         return ""
     }
 
+    // MARK: - 窗口关闭检测
+
+    private func startWindowExistencePolling() {
+        windowExistenceTimer?.invalidate()
+        let timer = Timer(timeInterval: AppConfig.Timing.windowExistencePoll, repeats: true) { [weak self] _ in
+            self?.removeClosedKnownSessions()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        windowExistenceTimer = timer
+    }
+
+    private func removeClosedKnownSessions() {
+        guard !knownSessions.isEmpty else { return }
+
+        var liveSessionIds = Set<String>()
+        var readableApps = Set<String>()
+        var runningApps = Set<String>()
+
+        for app in NSWorkspace.shared.runningApplications {
+            guard app.activationPolicy == .regular,
+                  app.bundleIdentifier != ownBundleId,
+                  let appName = app.localizedName else { continue }
+            runningApps.insert(appName)
+
+            guard let titles = windowTitles(pid: app.processIdentifier) else { continue }
+            readableApps.insert(appName)
+            titles.forEach { title in
+                liveSessionIds.insert("\(appName)|\(title)")
+            }
+        }
+
+        var closedSessionIds: [String] = []
+        for (sessionId, appName) in knownSessions {
+            let appStillRunning = runningApps.contains(appName)
+            let canJudgeWindows = readableApps.contains(appName)
+            if !appStillRunning || (canJudgeWindows && !liveSessionIds.contains(sessionId)) {
+                closedSessionIds.append(sessionId)
+            }
+        }
+
+        closedSessionIds.forEach { sessionId in
+            knownSessions.removeValue(forKey: sessionId)
+            if lastKey == sessionId { lastKey = "" }
+            onSessionClosed?(sessionId)
+        }
+    }
+
+    private func windowTitles(pid: pid_t) -> [String]? {
+        let appElement = AXUIElementCreateApplication(pid)
+        var windowsRef: CFTypeRef?
+        let err = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+        guard err == .success else { return nil }
+        guard let windows = windowsRef as? [AXUIElement] else { return [] }
+
+        return windows.map { window in
+            var titleRef: CFTypeRef?
+            if AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef) == .success,
+               let title = titleRef as? String {
+                return title
+            }
+            return ""
+        }
+    }
+
     deinit {
+        windowExistenceTimer?.invalidate()
         detach()
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }

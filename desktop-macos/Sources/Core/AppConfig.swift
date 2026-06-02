@@ -14,6 +14,8 @@ enum AppConfig {
         static let restartDebounce: TimeInterval = 0.3
         /// 网络环境变化后的缓冲延迟，避免接口抖动时频繁重启。
         static let networkChangeDebounce: TimeInterval = 1.0
+        /// 已上报窗口是否仍存在的检测间隔。
+        static let windowExistencePoll: TimeInterval = 1.0
         /// 粘贴完成后还原剪贴板的延迟。
         static let clipboardRestore: TimeInterval = 0.3
     }

@@ -9,6 +9,7 @@ import android.transition.TransitionManager
 import android.transition.TransitionSet
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
@@ -57,7 +58,7 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        WindowCompat.getInsetsController(window, window.decorView)?.isAppearanceLightStatusBars = true
+        applySystemBarAppearance()
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         applyEdgeToEdgeInsets()
@@ -201,6 +202,15 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
             }
 
             insets
+        }
+    }
+
+    private fun applySystemBarAppearance() {
+        val nightMode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        val lightBars = nightMode != Configuration.UI_MODE_NIGHT_YES
+        WindowCompat.getInsetsController(window, window.decorView)?.let { controller ->
+            controller.isAppearanceLightStatusBars = lightBars
+            controller.isAppearanceLightNavigationBars = lightBars
         }
     }
 

@@ -355,6 +355,12 @@ final class Coordinator {
             self.state.log("focus:", session.app, "-", session.title)
             self.sendSession(session)
         }
+        focus.onSessionClosed = { [weak self] sessionId in
+            guard let self = self else { return }
+            self.state.removeSession(id: sessionId)
+            self.state.log("session closed:", sessionId)
+            self.sendSessionClosed(sessionId: sessionId)
+        }
     }
 
     private func sendSession(_ session: FocusSession) {
@@ -365,6 +371,14 @@ final class Coordinator {
             "title": session.title,
             "device": Host.current().localizedName ?? ProcessInfo.processInfo.hostName,
             "ts": session.ts,
+        ]
+        sendPeerMessage(payload)
+    }
+
+    private func sendSessionClosed(sessionId: String) {
+        let payload: [String: Any] = [
+            Wire.Key.type: Wire.Msg.sessionClosed,
+            "sessionId": sessionId,
         ]
         sendPeerMessage(payload)
     }

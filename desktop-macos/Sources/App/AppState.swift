@@ -93,4 +93,10 @@ final class AppState: ObservableObject {
             }
         }
     }
+
+    func removeSession(id: String) {
+        DispatchQueue.main.async {
+            self.sessions.removeAll { $0.id == id }
+        }
+    }
 }

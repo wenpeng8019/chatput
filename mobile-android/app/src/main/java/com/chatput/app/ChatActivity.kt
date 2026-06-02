@@ -6,6 +6,7 @@ import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.content.Context
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.os.Bundle
@@ -93,7 +94,7 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        WindowCompat.getInsetsController(window, window.decorView)?.isAppearanceLightStatusBars = true
+        applySystemBarAppearance()
         binding = ActivityChatBinding.inflate(layoutInflater)
         setContentView(binding.root)
         applyEdgeToEdgeInsets()
@@ -840,10 +841,33 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         }
     }
 
-    // --- ConnectionManager.Observer ---
-    override fun onStatus(status: String, connected: Boolean) {}
+    private fun applySystemBarAppearance() {
+        val nightMode = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        val lightBars = nightMode != Configuration.UI_MODE_NIGHT_YES
+        WindowCompat.getInsetsController(window, window.decorView)?.let { controller ->
+            controller.isAppearanceLightStatusBars = lightBars
+            controller.isAppearanceLightNavigationBars = lightBars
+        }
+    }
 
-    override fun onSessionsChanged() {}
+    // --- ConnectionManager.Observer ---
+    override fun onStatus(status: String, connected: Boolean) {
+        if (!connected) {
+            Toast.makeText(this, "桌面已断开", Toast.LENGTH_SHORT).show()
+            finish()
+        }
+    }
+
+    override fun onSessionsChanged() {
+        val currentId = session?.id ?: return
+        val updated = ConnectionManager.sessionById(currentId)
+        if (updated == null) {
+            Toast.makeText(this, "桌面窗口已关闭", Toast.LENGTH_SHORT).show()
+            finish()
+        } else {
+            session = updated
+        }
+    }
 
     override fun onMessage(sessionId: String, msg: ChatMessage) {
         if (sessionId == session?.id) {
