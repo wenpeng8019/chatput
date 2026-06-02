@@ -25,6 +25,17 @@ import java.nio.charset.StandardCharsets
  */
 object ConnectionManager : SignalingClient.Listener {
 
+    private enum class TransportMode {
+        WEBRTC,
+        WEBSOCKET;
+
+        companion object {
+            fun from(raw: String): TransportMode {
+                return if (raw.equals("websocket", ignoreCase = true)) WEBSOCKET else WEBRTC
+            }
+        }
+    }
+
     interface Observer {
         fun onStatus(status: String, connected: Boolean)
         fun onSessionsChanged()
@@ -41,13 +52,18 @@ object ConnectionManager : SignalingClient.Listener {
     var status: String = "未连接"
         private set
     val isConnected: Boolean
-        get() = dataChannel?.state() == DataChannel.State.OPEN
+        get() = when (transportMode) {
+            TransportMode.WEBRTC -> dataChannel?.state() == DataChannel.State.OPEN
+            TransportMode.WEBSOCKET -> signalingReady
+        }
 
     private var factory: PeerConnectionFactory? = null
     private var pc: PeerConnection? = null
     private var dataChannel: DataChannel? = null
     private var signaling: SignalingClient? = null
     private var appContext: Context? = null
+    private var transportMode = TransportMode.WEBRTC
+    private var signalingReady = false
 
     private val iceServers = listOf(
         PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
@@ -77,12 +93,16 @@ object ConnectionManager : SignalingClient.Listener {
      */
     fun pairWith(context: Context, qrPayload: String) {
         appContext = context.applicationContext
-        ensureFactory()
 
         val data = JSONObject(qrPayload)
         val url = data.getString("url")
         val roomId = data.getString("roomId")
         val token = data.getString("token")
+        transportMode = TransportMode.from(data.optString("transport", "webrtc"))
+
+        if (transportMode == TransportMode.WEBRTC) {
+            ensureFactory()
+        }
 
         setStatus("连接信令服务器…", false)
         signaling = SignalingClient(url, this)
@@ -106,11 +126,18 @@ object ConnectionManager : SignalingClient.Listener {
     // --- SignalingClient.Listener ------------------------------------------
 
     override fun onPeerJoined() {
-        setStatus("配对成功，正在建立连接…", false)
-        createPeerConnection()
+        if (transportMode == TransportMode.WEBSOCKET) {
+            signalingReady = true
+            setStatus("WebSocket 已连接", true)
+            sendHello()
+        } else {
+            setStatus("配对成功，正在建立连接…", false)
+            createPeerConnection()
+        }
     }
 
     override fun onSignal(data: JSONObject) {
+        if (transportMode != TransportMode.WEBRTC) return
         if (data.has("sdp")) {
             val sdp = data.getJSONObject("sdp")
             val type = SessionDescription.Type.fromCanonicalForm(sdp.getString("type"))
@@ -132,15 +159,22 @@ object ConnectionManager : SignalingClient.Listener {
         }
     }
 
+    override fun onAppMessage(data: JSONObject) {
+        handlePeerMessage(data)
+    }
+
     override fun onPeerLeft() {
+        signalingReady = false
         setStatus("桌面端已断开", false)
     }
 
     override fun onError(reason: String) {
+        signalingReady = false
         setStatus("错误: $reason", false)
     }
 
     override fun onClosed() {
+        signalingReady = false
         setStatus("信令断开", false)
     }
 
@@ -231,8 +265,12 @@ object ConnectionManager : SignalingClient.Listener {
     }
 
     private fun sendJson(json: JSONObject) {
-        val buffer = ByteBuffer.wrap(json.toString().toByteArray(StandardCharsets.UTF_8))
-        dataChannel?.send(DataChannel.Buffer(buffer, false))
+        if (transportMode == TransportMode.WEBSOCKET) {
+            signaling?.sendMessage(json)
+        } else {
+            val buffer = ByteBuffer.wrap(json.toString().toByteArray(StandardCharsets.UTF_8))
+            dataChannel?.send(DataChannel.Buffer(buffer, false))
+        }
     }
 
     private fun handleChannelMessage(text: String) {
@@ -241,6 +279,10 @@ object ConnectionManager : SignalingClient.Listener {
         } catch (e: Exception) {
             return
         }
+        handlePeerMessage(msg)
+    }
+
+    private fun handlePeerMessage(msg: JSONObject) {
         if (msg.optString("type") == "session") {
             upsertSession(msg)
         }
@@ -271,8 +313,7 @@ object ConnectionManager : SignalingClient.Listener {
             .put("type", "text")
             .put("text", text)
             .put("sessionId", session.id)
-        val buffer = ByteBuffer.wrap(json.toString().toByteArray(StandardCharsets.UTF_8))
-        dataChannel?.send(DataChannel.Buffer(buffer, false))
+        sendJson(json)
 
         val m = ChatMessage(text, fromMe = true)
         session.messages.add(m)
@@ -296,6 +337,8 @@ object ConnectionManager : SignalingClient.Listener {
         dataChannel = null
         pc = null
         signaling = null
+        signalingReady = false
+        transportMode = TransportMode.WEBRTC
         sessions.clear()
         activeSessionId = null
         setStatus("未连接", false)

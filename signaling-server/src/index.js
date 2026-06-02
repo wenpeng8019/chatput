@@ -1,11 +1,12 @@
 // WebRTC signaling + pairing server.
-// Pure relay for SDP/ICE; the actual text payload travels P2P over the DataChannel.
+// Can relay either SDP/ICE for WebRTC or direct business messages over WebSocket.
 //
 // Message protocol (JSON over WebSocket):
 //   C->S {type:'create-room'}                       -> S->C {type:'room-created', roomId, token}
 //   C->S {type:'join-room', roomId, token}          -> both: {type:'peer-joined', role}
 //                                                      joiner err: {type:'error', reason}
 //   C->S {type:'signal', data}                      -> forwarded to the other peer as-is
+//   C->S {type:'message', data}                     -> forwarded to the other peer as-is
 //   S->C {type:'peer-left'}                          when a peer disconnects
 //
 // Roles: the room creator is 'host' (desktop), the joiner is 'guest' (phone).
@@ -105,6 +106,17 @@ wss.on('connection', (ws) => {
         }
         const peer = otherPeer(room, ws);
         if (peer) send(peer, { type: 'signal', data: msg.data });
+        break;
+      }
+
+      case 'message': {
+        const room = rooms.get(ws._roomId);
+        if (!room) {
+          send(ws, { type: 'error', reason: 'not-in-room' });
+          return;
+        }
+        const peer = otherPeer(room, ws);
+        if (peer) send(peer, { type: 'message', data: msg.data });
         break;
       }
 

@@ -3,122 +3,160 @@
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    android:background="@color/chatput_bg">
 
-    <TextView
-        android:id="@+id/subtitle"
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/chat_header"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:padding="12dp"
-        android:background="#F2F4F7"
-        android:textColor="#475467"
-        android:textSize="13sp"
-        android:maxLines="1"
-        android:ellipsize="end"
-        app:layout_constraintTop_toTopOf="parent"
+        android:layout_marginStart="18dp"
+        android:layout_marginTop="18dp"
+        android:layout_marginEnd="18dp"
+        app:cardBackgroundColor="@color/chatput_surface"
+        app:cardCornerRadius="26dp"
+        app:cardElevation="0dp"
+        app:strokeColor="@color/chatput_line"
+        app:strokeWidth="1dp"
+        app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:layout_constraintTop_toTopOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="20dp"
+            android:paddingTop="18dp"
+            android:paddingBottom="16dp">
+
+            <TextView
+                android:id="@+id/app_title"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textColor="@color/chatput_text_primary"
+                android:textSize="24sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/subtitle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/chatput_text_secondary"
+                android:textSize="14sp" />
+
+        </LinearLayout>
+
+    </com.google.android.material.card.MaterialCardView>
 
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/list"
         android:layout_width="0dp"
         android:layout_height="0dp"
-        android:padding="8dp"
+        android:paddingStart="14dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="14dp"
+        android:paddingBottom="14dp"
         android:clipToPadding="false"
-        app:layout_constraintTop_toBottomOf="@id/subtitle"
+        app:layout_constraintTop_toBottomOf="@id/chat_header"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/hint" />
+        app:layout_constraintBottom_toTopOf="@id/composer_card" />
 
-    <TextView
-        android:id="@+id/hint"
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/composer_card"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:gravity="center"
-        android:padding="6dp"
-        android:text="按住说话"
-        android:textColor="#98A2B3"
-        app:layout_constraintStart_toStartOf="parent"
+        android:layout_marginStart="18dp"
+        android:layout_marginEnd="18dp"
+        android:layout_marginBottom="16dp"
+        app:cardBackgroundColor="@color/chatput_surface"
+        app:cardCornerRadius="26dp"
+        app:cardElevation="0dp"
+        app:strokeColor="@color/chatput_line"
+        app:strokeWidth="1dp"
+        app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/action_buttons" />
+        app:layout_constraintStart_toStartOf="parent">
 
-    <LinearLayout
-        android:id="@+id/action_buttons"
-        android:layout_width="0dp"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingHorizontal="12dp"
-        android:paddingBottom="6dp"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/btn_talk">
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="16dp"
+            android:paddingTop="14dp"
+            android:paddingBottom="14dp">
 
-        <Button
+            <TextView
+                android:id="@+id/hint"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:paddingBottom="10dp"
+                android:text="按住说话"
+                android:textColor="@color/chatput_text_tertiary"
+                android:textSize="14sp" />
+
+            <LinearLayout
+                android:id="@+id/action_buttons"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:paddingBottom="12dp">
+
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_enter"
-            style="?attr/materialButtonOutlinedStyle"
+            style="@style/Chatput.ActionButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginEnd="6dp"
+            android:layout_marginEnd="8dp"
             android:minWidth="0dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:paddingHorizontal="4dp"
-            android:textSize="13sp"
             android:text="回车" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_backspace"
-            style="?attr/materialButtonOutlinedStyle"
+            style="@style/Chatput.ActionButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginEnd="6dp"
+            android:layout_marginEnd="8dp"
             android:minWidth="0dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:paddingHorizontal="4dp"
-            android:textSize="13sp"
             android:text="回退" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_select_all"
-            style="?attr/materialButtonOutlinedStyle"
+            style="@style/Chatput.ActionButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:layout_marginEnd="6dp"
+            android:layout_marginEnd="8dp"
             android:minWidth="0dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:paddingHorizontal="4dp"
-            android:textSize="13sp"
             android:text="全选" />
 
-        <Button
+        <com.google.android.material.button.MaterialButton
             android:id="@+id/btn_clear"
-            style="?attr/materialButtonOutlinedStyle"
+            style="@style/Chatput.ActionButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
             android:minWidth="0dp"
-            android:insetTop="0dp"
-            android:insetBottom="0dp"
-            android:paddingHorizontal="4dp"
-            android:textSize="13sp"
             android:text="清空" />
 
-    </LinearLayout>
+            </LinearLayout>
 
-    <Button
-        android:id="@+id/btn_talk"
-        android:layout_width="0dp"
-        android:layout_height="64dp"
-        android:layout_margin="16dp"
-        android:text="按住 说话"
-        android:textSize="18sp"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toBottomOf="parent" />
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/btn_talk"
+                style="@style/Chatput.PrimaryButton"
+                android:layout_width="match_parent"
+                android:layout_height="56dp"
+                android:text="按住说话" />
+
+        </LinearLayout>
+
+    </com.google.android.material.card.MaterialCardView>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

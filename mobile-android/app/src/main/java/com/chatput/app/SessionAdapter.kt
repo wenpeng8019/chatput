@@ -1,12 +1,12 @@
 package com.chatput.app
 
-import android.graphics.Color
-import android.util.TypedValue
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
+import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
+import com.google.android.material.card.MaterialCardView
 
 /** 会话列表适配器（IM 会话列表风格） */
 class SessionAdapter(
@@ -15,6 +15,7 @@ class SessionAdapter(
 ) : RecyclerView.Adapter<SessionAdapter.VH>() {
 
     class VH(view: View) : RecyclerView.ViewHolder(view) {
+        val card = view as MaterialCardView
         val app: TextView = view.findViewById(R.id.session_app)
         val title: TextView = view.findViewById(R.id.session_title)
         val accent: View = view.findViewById(R.id.session_accent)
@@ -36,28 +37,15 @@ class SessionAdapter(
         val active = s.id == ConnectionManager.activeSessionId
         holder.accent.visibility = if (active) View.VISIBLE else View.INVISIBLE
         holder.badge.visibility = if (active) View.VISIBLE else View.GONE
-        if (active) {
-            holder.itemView.setBackgroundColor(ACTIVE_BG)
-        } else {
-            holder.itemView.setBackgroundResource(selectableBackground(holder.itemView))
-        }
+        val bgColor = if (active) R.color.chatput_surface_active else R.color.chatput_surface
+        val strokeColor = if (active) R.color.chatput_accent_soft else R.color.chatput_line
+        holder.card.setCardBackgroundColor(ContextCompat.getColor(holder.itemView.context, bgColor))
+        holder.card.strokeColor = ContextCompat.getColor(holder.itemView.context, strokeColor)
 
         holder.itemView.setOnClickListener { onClick(s) }
     }
 
     override fun getItemCount(): Int = items.size
-
-    private fun selectableBackground(view: View): Int {
-        val tv = TypedValue()
-        view.context.theme.resolveAttribute(
-            android.R.attr.selectableItemBackground, tv, true
-        )
-        return tv.resourceId
-    }
-
-    private companion object {
-        val ACTIVE_BG = Color.parseColor("#F2F6FF")
-    }
 }
 
 

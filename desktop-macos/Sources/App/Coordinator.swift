@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Combine
+import Network
 
 /// 顶层协调器：把信令、WebRTC、焦点监控、文字注入串起来。
 /// 桌面端是 WebRTC HOST：创建房间 → 出二维码 → 等手机加入 → 发 offer → 建 DataChannel。
@@ -21,6 +22,13 @@ final class Coordinator {
     private var cancellables = Set<AnyCancellable>()
     private var started = false
     private var accessibilityTimer: Timer?
+    private var networkMonitor: NWPathMonitor?
+    private let networkQueue = DispatchQueue(label: "com.chatput.network-monitor")
+    private var lastNetworkSignature = ""
+    private var networkChangeWorkItem: DispatchWorkItem?
+    private var shouldPromptRescanAfterRefresh = false
+
+    private var transport: TransportMode { settings.transport }
 
     func start() {
         state.accessibilityGranted = TextInjector.isAccessibilityTrusted()
@@ -28,6 +36,7 @@ final class Coordinator {
         wireWebRTC()
         wireFocus()
         startAccessibilityPolling()
+        startNetworkMonitoring()
 
         // 配置变更：仅当服务处于运行状态时才重启链路。
         settings.didApply
@@ -112,6 +121,7 @@ final class Coordinator {
     /// 运行中重启：断开重连，必要时重启内置服务器。
     private func restart() {
         reconnectWorkItem?.cancel()
+        networkChangeWorkItem?.cancel()
         signaling.close()
         webrtc.close()
         server.stop()
@@ -126,6 +136,59 @@ final class Coordinator {
         DispatchQueue.main.asyncAfter(deadline: .now() + AppConfig.Timing.restartDebounce) { [weak self] in
             self?.bringUp()
         }
+    }
+
+    // MARK: - 网络变化监听
+
+    private func startNetworkMonitoring() {
+        guard networkMonitor == nil else { return }
+        let monitor = NWPathMonitor()
+        networkMonitor = monitor
+        monitor.pathUpdateHandler = { [weak self] path in
+            self?.handleNetworkPathUpdate(path)
+        }
+        monitor.start(queue: networkQueue)
+    }
+
+    private func handleNetworkPathUpdate(_ path: NWPath) {
+        let ip = NetworkInfo.primaryLANIPv4() ?? ""
+        let signature = [
+            path.status == .satisfied ? "up" : "down",
+            path.usesInterfaceType(.wifi) ? "wifi" : "",
+            path.usesInterfaceType(.wiredEthernet) ? "wired" : "",
+            path.usesInterfaceType(.cellular) ? "cellular" : "",
+            ip,
+        ].joined(separator: "|")
+
+        guard !signature.isEmpty else { return }
+        if lastNetworkSignature.isEmpty {
+            lastNetworkSignature = signature
+            return
+        }
+        guard signature != lastNetworkSignature else { return }
+
+        let previous = lastNetworkSignature
+        lastNetworkSignature = signature
+        guard started else { return }
+
+        if settings.mode == .builtIn || path.status == .satisfied {
+            scheduleNetworkRefresh(from: previous, to: signature)
+        }
+    }
+
+    private func scheduleNetworkRefresh(from oldValue: String, to newValue: String) {
+        networkChangeWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self, self.started else { return }
+            self.state.log("network changed:", oldValue, "->", newValue)
+            self.shouldPromptRescanAfterRefresh = true
+            self.state.setStatus(zh: "网络环境已变化，正在刷新连接…",
+                                 en: "Network changed, refreshing connection…",
+                                 connected: false)
+            self.restart()
+        }
+        networkChangeWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + AppConfig.Timing.networkChangeDebounce, execute: work)
     }
 
     // MARK: - 内置信令服务器
@@ -149,6 +212,16 @@ final class Coordinator {
 
     private func connectSignaling() {
         let url = settings.hostConnectURL
+        if settings.mode == .builtIn, settings.resolvedAdvertisedHost == nil {
+            DispatchQueue.main.async {
+                self.state.qrImage = nil
+                self.state.roomCode = ""
+                self.state.advertisedURL = ""
+            }
+            state.setStatus(zh: "等待可用网络地址…", en: "Waiting for a reachable network address…", connected: false)
+            state.log("skip room creation: no reachable LAN address")
+            return
+        }
         guard !url.isEmpty else {
             state.setStatus(zh: "信令地址为空，请在设置中填写", en: "Signaling address empty, set it in Settings", connected: false)
             return
@@ -182,10 +255,13 @@ final class Coordinator {
             roomId = msg["roomId"] as? String ?? ""
             token = msg["token"] as? String ?? ""
             let advertised = settings.advertisedURL
+            let refreshed = shouldPromptRescanAfterRefresh
+            shouldPromptRescanAfterRefresh = false
             let payload: [String: Any] = [
                 "url": advertised,
                 "roomId": roomId,
                 "token": token,
+                Wire.Key.transport: transport.rawValue,
             ]
             let json = (try? JSONSerialization.data(withJSONObject: payload))
                 .flatMap { String(data: $0, encoding: .utf8) } ?? ""
@@ -193,21 +269,36 @@ final class Coordinator {
                 self.state.roomCode = "房间 \(self.roomId)"
                 self.state.advertisedURL = advertised
                 self.state.qrImage = QRCodeGenerator.image(from: json, size: 240)
-                self.state.setStatus(zh: "等待手机扫码配对…", en: "Waiting for phone to scan…", connected: false)
+                if refreshed {
+                    self.state.setStatus(zh: "二维码已刷新，请重新扫码", en: "QR code refreshed, please scan again", connected: false)
+                } else {
+                    self.state.setStatus(zh: "等待手机扫码配对…", en: "Waiting for phone to scan…", connected: false)
+                }
             }
             state.log("room created:", roomId, "advertise:", advertised)
 
         case Wire.Signal.peerJoined:
             // 桌面端是 host：手机加入后由我方发起 offer。
             if (msg["role"] as? String) == Wire.Role.host {
-                state.log("guest joined, creating offer")
-                state.setStatus(zh: "配对成功，建立连接…", en: "Paired, establishing connection…", connected: false)
-                webrtc.createConnectionAndOffer()
+                if transport == .webrtc {
+                    state.log("guest joined, creating offer")
+                    state.setStatus(zh: "配对成功，建立连接…", en: "Paired, establishing connection…", connected: false)
+                    webrtc.createConnectionAndOffer()
+                } else {
+                    state.log("guest joined, websocket transport ready")
+                    state.setStatus(zh: "WebSocket 已连接 ✅", en: "WebSocket connected ✅", connected: true)
+                    focus.ensureCurrentDelivered()
+                }
             }
 
         case Wire.Signal.signal:
             if let data = msg["data"] as? [String: Any] {
                 webrtc.handleRemoteSignal(data)
+            }
+
+        case Wire.Signal.message:
+            if let data = msg[Wire.Key.data] as? [String: Any] {
+                handlePeerMessage(data)
             }
 
         case Wire.Signal.peerLeft:
@@ -231,11 +322,10 @@ final class Coordinator {
         }
         webrtc.onConnected = { [weak self] in
             self?.state.setStatus(zh: "P2P 已连接 ✅", en: "P2P connected ✅", connected: true)
-            self?.focus.start()
         }
         // DataChannel 真正可发时补发当前焦点会话（首次连通瞬间通道可能尚未 open）。
         webrtc.onChannelOpen = { [weak self] in
-            self?.focus.resendCurrent()
+            self?.focus.ensureCurrentDelivered()
         }
         webrtc.onText = { [weak self] text in
             self?.state.log("recv text:", text)
@@ -263,7 +353,50 @@ final class Coordinator {
             guard let self = self else { return }
             self.state.upsertSession(session)
             self.state.log("focus:", session.app, "-", session.title)
-            self.webrtc.sendSession(session)
+            self.sendSession(session)
+        }
+    }
+
+    private func sendSession(_ session: FocusSession) {
+        let payload: [String: Any] = [
+            Wire.Key.type: Wire.Msg.session,
+            "sessionId": session.id,
+            "app": session.app,
+            "title": session.title,
+            "ts": session.ts,
+        ]
+        sendPeerMessage(payload)
+    }
+
+    private func sendPeerMessage(_ payload: [String: Any]) {
+        if transport == .webrtc {
+            webrtc.sendMessage(payload)
+        } else {
+            signaling.send([Wire.Key.type: Wire.Signal.message, Wire.Key.data: payload])
+        }
+    }
+
+    private func handlePeerMessage(_ payload: [String: Any]) {
+        switch payload[Wire.Key.type] as? String {
+        case Wire.Msg.text:
+            if let text = payload["text"] as? String {
+                state.log("recv text:", text)
+                injector.inject(text)
+            }
+        case Wire.Msg.action:
+            if let action = payload["action"] as? String {
+                state.log("recv action:", action)
+                if let act = TextInjector.Action(rawValue: action) {
+                    injector.perform(act)
+                }
+            }
+        case Wire.Msg.hello:
+            if let device = payload["device"] as? String {
+                state.log("device:", device)
+                state.setConnectedDevice(device)
+            }
+        default:
+            break
         }
     }
 }

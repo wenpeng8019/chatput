@@ -59,6 +59,29 @@ struct SettingsView: View {
                         .toggleStyle(.switch)
                     Spacer()
                 }
+
+                HStack(alignment: .top, spacing: 12) {
+                    Text(L.t("传输模式", "Transport"))
+                        .font(.system(size: 12))
+                        .frame(width: 90, alignment: .leading)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("", selection: $settings.transport) {
+                            ForEach(TransportMode.allCases) { mode in
+                                Text(mode.label).tag(mode)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 180)
+
+                        Text(settings.transport.note)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer()
+                }
             }
 
             Spacer()
@@ -202,12 +225,6 @@ struct SettingsView: View {
 
     /// 规范化外部地址：补全缺失的 ws:// 前缀；https/http 映射为 wss/ws。
     static func normalizeExternalURL(_ raw: String) -> String {
-        let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        if trimmed.isEmpty { return "" }
-        let lower = trimmed.lowercased()
-        if lower.hasPrefix("ws://") || lower.hasPrefix("wss://") { return trimmed }
-        if lower.hasPrefix("https://") { return "wss://" + trimmed.dropFirst("https://".count) }
-        if lower.hasPrefix("http://") { return "ws://" + trimmed.dropFirst("http://".count) }
-        return "ws://" + trimmed
+        AppSettings.normalizeExternalURL(raw)
     }
 }

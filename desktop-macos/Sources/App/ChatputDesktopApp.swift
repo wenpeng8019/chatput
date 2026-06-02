@@ -57,13 +57,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func togglePopover(_ sender: Any?) {
-        guard let button = statusItem.button else { return }
         if popover.isShown {
             popover.performClose(sender)
         } else {
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            popover.contentViewController?.view.window?.makeKey()
+            showPopover()
         }
+    }
+
+    private func showPopover() {
+        guard let button = statusItem.button else { return }
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
     }
 
     // MARK: - 设置窗口
@@ -80,6 +84,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let host = NSHostingController(
             rootView: SettingsView(onClose: { [weak self] in
                 self?.settingsWindow?.performClose(nil)
+                DispatchQueue.main.async { self?.showPopover() }
             })
         )
         let window = NSWindow(contentViewController: host)

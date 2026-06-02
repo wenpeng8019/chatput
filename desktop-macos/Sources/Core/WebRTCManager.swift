@@ -102,10 +102,10 @@ final class WebRTCManager: NSObject {
             "title": session.title,
             "ts": session.ts,
         ]
-        sendJSON(obj)
+        sendMessage(obj)
     }
 
-    private func sendJSON(_ obj: [String: Any]) {
+    func sendMessage(_ obj: [String: Any]) {
         guard let channel = channel, channel.readyState == .open,
               let data = try? JSONSerialization.data(withJSONObject: obj) else { return }
         channel.sendData(RTCDataBuffer(data: data, isBinary: false))

@@ -9,8 +9,8 @@ import org.json.JSONObject
 /**
  * WebSocket 信令客户端。
  * 协议与桌面端 / 信令服务器一致：
- *   发送: join-room {roomId, token}, signal {data}
- *   接收: peer-joined, signal, peer-left, error
+ *   发送: join-room {roomId, token}, signal {data}, message {data}
+ *   接收: peer-joined, signal, message, peer-left, error
  */
 class SignalingClient(
     private val url: String,
@@ -19,6 +19,7 @@ class SignalingClient(
     interface Listener {
         fun onPeerJoined()
         fun onSignal(data: JSONObject)
+        fun onAppMessage(data: JSONObject)
         fun onPeerLeft()
         fun onError(reason: String)
         fun onClosed()
@@ -43,6 +44,7 @@ class SignalingClient(
                 when (msg.optString("type")) {
                     "peer-joined" -> listener.onPeerJoined()
                     "signal" -> listener.onSignal(msg.getJSONObject("data"))
+                    "message" -> listener.onAppMessage(msg.getJSONObject("data"))
                     "peer-left" -> listener.onPeerLeft()
                     "error" -> listener.onError(msg.optString("reason", "未知错误"))
                 }
@@ -61,6 +63,11 @@ class SignalingClient(
     /** 发送 signal 消息（包裹 SDP / ICE） */
     fun sendSignal(data: JSONObject) {
         val msg = JSONObject().put("type", "signal").put("data", data)
+        ws?.send(msg.toString())
+    }
+
+    fun sendMessage(data: JSONObject) {
+        val msg = JSONObject().put("type", "message").put("data", data)
         ws?.send(msg.toString())
     }
 

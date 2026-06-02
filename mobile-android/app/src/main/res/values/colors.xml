@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="chatput_bg">#F4F6F8</color>
+    <color name="chatput_surface">#FFFFFFFF</color>
+    <color name="chatput_surface_alt">#EEF2F6</color>
+    <color name="chatput_surface_active">#EAF2FF</color>
+    <color name="chatput_line">#D7DEE8</color>
+    <color name="chatput_accent">#2F6FE4</color>
+    <color name="chatput_accent_strong">#2155B8</color>
+    <color name="chatput_accent_soft">#DCE8FF</color>
+    <color name="chatput_on_accent">#FFFFFFFF</color>
+    <color name="chatput_text_primary">#182230</color>
+    <color name="chatput_text_secondary">#5E6B7A</color>
+    <color name="chatput_text_tertiary">#8A96A3</color>
+    <color name="chatput_status_connected_bg">#E5F3EA</color>
+    <color name="chatput_status_connected_text">#246B45</color>
+    <color name="chatput_status_idle_bg">#EDF1F5</color>
+    <color name="chatput_status_idle_text">#66707D</color>
+    <color name="chatput_message_bubble">#DCE8FF</color>
+</resources>

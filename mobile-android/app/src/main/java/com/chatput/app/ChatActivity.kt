@@ -35,8 +35,8 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
             return
         }
 
-        title = session!!.app.ifBlank { "聊入" }
-        binding.subtitle.text = session!!.title
+        binding.appTitle.text = session!!.app.ifBlank { "聊入" }
+        binding.subtitle.text = session!!.title.ifBlank { "当前窗口" }
 
         adapter = MessageAdapter(session!!.messages)
         binding.list.layoutManager = LinearLayoutManager(this).apply { stackFromEnd = true }

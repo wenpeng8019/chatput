@@ -10,6 +10,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.widget.TextViewCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -97,12 +98,17 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
         adapter.notifyDataSetChanged()
         binding.empty.visibility =
             if (ConnectionManager.sessions.isEmpty()) View.VISIBLE else View.GONE
-        binding.status.text = ConnectionManager.status
+        binding.empty.text = if (ConnectionManager.isConnected) {
+            "已连接，等待桌面端当前窗口同步…"
+        } else {
+            "点击右下角按钮，连接你的桌面。"
+        }
+        renderStatus(ConnectionManager.status, ConnectionManager.isConnected)
     }
 
     // --- ConnectionManager.Observer ---
     override fun onStatus(status: String, connected: Boolean) {
-        binding.status.text = status
+        renderStatus(status, connected)
     }
 
     override fun onSessionsChanged() {
@@ -110,4 +116,21 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
     }
 
     override fun onMessage(sessionId: String, msg: ChatMessage) {}
+
+    private fun renderStatus(status: String, connected: Boolean) {
+        binding.status.text = status
+        val background = if (connected) {
+            R.drawable.bg_status_chip_connected
+        } else {
+            R.drawable.bg_status_chip_idle
+        }
+        val textColor = if (connected) {
+            R.color.chatput_status_connected_text
+        } else {
+            R.color.chatput_status_idle_text
+        }
+        binding.status.setBackgroundResource(background)
+        binding.status.setTextColor(ContextCompat.getColor(this, textColor))
+        TextViewCompat.setCompoundDrawableTintList(binding.status, null)
+    }
 }

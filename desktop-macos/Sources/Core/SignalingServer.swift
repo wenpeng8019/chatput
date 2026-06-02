@@ -9,6 +9,7 @@ import Network
 ///   C->S {type:'join-room', roomId, token}     -> 双方: {type:'peer-joined', role}
 ///                                                 失败: {type:'error', reason}
 ///   C->S {type:'signal', data}                 -> 原样转发给房间内另一端
+///   C->S {type:'message', data}                -> 业务消息中继给房间内另一端
 ///   S->C {type:'peer-left'}                     某端断开时通知另一端
 final class SignalingServer {
     /// 房间内创建者是 host（桌面），加入者是 guest（手机）。
@@ -220,6 +221,15 @@ final class SignalingServer {
             }
             if let peer = otherPeer(in: room, of: client), let data = obj["data"] {
                 sendJSON(["type": Wire.Signal.signal, "data": data], to: peer)
+            }
+
+        case Wire.Signal.message:
+            guard let roomId = client.roomId, let room = rooms[roomId] else {
+                sendJSON(["type": Wire.Signal.error, "reason": Wire.Reason.notInRoom], to: client)
+                return
+            }
+            if let peer = otherPeer(in: room, of: client), let data = obj[Wire.Key.data] {
+                sendJSON([Wire.Key.type: Wire.Signal.message, Wire.Key.data: data], to: peer)
             }
 
         default:

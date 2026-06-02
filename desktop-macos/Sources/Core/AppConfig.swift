@@ -12,6 +12,8 @@ enum AppConfig {
         static let reconnectDelay: TimeInterval = 3
         /// 配置变更后重启链路前的缓冲延迟。
         static let restartDebounce: TimeInterval = 0.3
+        /// 网络环境变化后的缓冲延迟，避免接口抖动时频繁重启。
+        static let networkChangeDebounce: TimeInterval = 1.0
         /// 粘贴完成后还原剪贴板的延迟。
         static let clipboardRestore: TimeInterval = 0.3
     }

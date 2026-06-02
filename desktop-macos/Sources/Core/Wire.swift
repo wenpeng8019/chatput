@@ -9,6 +9,8 @@ enum Wire {
     /// 公共字段名。
     enum Key {
         static let type = "type"
+        static let data = "data"
+        static let transport = "transport"
     }
 
     /// WebRTC DataChannel 上的业务消息（桌面 ⇄ 手机）。
@@ -34,7 +36,14 @@ enum Wire {
         static let peerJoined = "peer-joined"
         static let peerLeft = "peer-left"
         static let signal = "signal"
+        static let message = "message"
         static let error = "error"
+    }
+
+    /// 端到端业务传输模式。
+    enum Transport {
+        static let webrtc = "webrtc"
+        static let websocket = "websocket"
     }
 
     /// 房间内角色。

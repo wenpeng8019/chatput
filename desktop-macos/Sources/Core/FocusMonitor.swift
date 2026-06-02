@@ -39,6 +39,15 @@ final class FocusMonitor {
         emitCurrent()
     }
 
+    /// 已在监控时补发当前焦点；未启动时先启动再等待后续变化。
+    func ensureCurrentDelivered() {
+        if monitoring {
+            resendCurrent()
+        } else {
+            start()
+        }
+    }
+
     @objc private func activeAppChanged(_ note: Notification) {
         guard let app = note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
         attach(to: app)
