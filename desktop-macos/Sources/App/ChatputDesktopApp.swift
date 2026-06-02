@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 @main
 struct ChatputDesktopApp: App {
@@ -16,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private let popover = NSPopover()
     private var settingsWindow: NSWindow?
+    private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // 请求辅助功能权限（AXObserver 监控焦点 + CGEvent 注入都需要）。
@@ -24,6 +26,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         setupStatusItem()
         setupPopover()
         coordinator.start()
+
+        // 语言变更时实时更新设置窗口标题。
+        AppSettings.shared.$language
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.settingsWindow?.title = L.t("聊入 · 设置", "Chatput · Settings")
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - 菜单栏图标
@@ -76,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.performClose(nil)
 
         if let window = settingsWindow {
+            window.title = L.t("聊入 · 设置", "Chatput · Settings")
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
             return

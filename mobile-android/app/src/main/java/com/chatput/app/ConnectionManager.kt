@@ -88,6 +88,18 @@ object ConnectionManager : SignalingClient.Listener {
 
     fun sessionById(id: String): Session? = sessions.firstOrNull { it.id == id }
 
+    fun connectionGroupLabel(): String = when (transportMode) {
+        TransportMode.WEBRTC -> "P2P 连接"
+        TransportMode.WEBSOCKET -> "WS 连接"
+    }
+
+    fun connectedDeviceNames(): List<String> {
+        val names = sessions
+            .mapNotNull { it.device.takeIf { name -> name.isNotBlank() } }
+            .distinct()
+        return names.ifEmpty { listOf("桌面设备") }
+    }
+
     /**
      * 用扫码得到的 JSON 配对： {"url":"ws://...:8080","roomId":"...","token":"..."}
      */
@@ -100,6 +112,9 @@ object ConnectionManager : SignalingClient.Listener {
         val token = data.getString("token")
         transportMode = TransportMode.from(data.optString("transport", "webrtc"))
 
+        lastPairedRoomId = roomId
+        savePairing(context, qrPayload, roomId)
+
         if (transportMode == TransportMode.WEBRTC) {
             ensureFactory()
         }
@@ -108,6 +123,75 @@ object ConnectionManager : SignalingClient.Listener {
         signaling = SignalingClient(url, this)
         signaling!!.connect(roomId, token)
     }
+
+    // --- 历史连接记录（最多 3 个，点击可免扫码重连） --------------------------
+
+    /** 一条历史连接：label 为可读设备名，payload 为可直接用于 [pairWith] 的二维码 JSON。 */
+    data class Pairing(val label: String, val payload: String)
+
+    private const val PREF_NAME = "chatput_prefs"
+    private const val KEY_RECENT = "recent_pairings"
+    private var lastPairedRoomId: String? = null
+
+    fun recentPairings(context: Context): List<Pairing> {
+        val sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val raw = sp.getString(KEY_RECENT, null) ?: return emptyList()
+        return try {
+            val arr = org.json.JSONArray(raw)
+            (0 until arr.length()).map {
+                val o = arr.getJSONObject(it)
+                Pairing(o.getString("label"), o.getString("payload"))
+            }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    /** 记录/置顶一条历史连接，按 roomId 去重，最多保留 3 条。 */
+    private fun savePairing(context: Context, payload: String, roomId: String, label: String? = null) {
+        val sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+        val existing = recentPairings(context).filterNot {
+            runCatching { JSONObject(it.payload).optString("roomId") == roomId }.getOrDefault(false)
+        }
+        val entry = Pairing(label ?: "房间 $roomId", payload)
+        val updated = (listOf(entry) + existing).take(3)
+        val arr = org.json.JSONArray()
+        updated.forEach { arr.put(JSONObject().put("label", it.label).put("payload", it.payload)) }
+        sp.edit().putString(KEY_RECENT, arr.toString()).apply()
+    }
+
+    private fun removePairing(roomId: String) {
+        val ctx = appContext ?: return
+        val updated = recentPairings(ctx).filterNot {
+            runCatching { JSONObject(it.payload).optString("roomId") == roomId }.getOrDefault(false)
+        }
+        val arr = org.json.JSONArray()
+        updated.forEach { arr.put(JSONObject().put("label", it.label).put("payload", it.payload)) }
+        ctx.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putString(KEY_RECENT, arr.toString())
+            .apply()
+        if (lastPairedRoomId == roomId) lastPairedRoomId = null
+        notifySessions()
+    }
+
+    private fun removeLastPairingIfExpired(reason: String): Boolean {
+        if (reason != "room-not-found" && reason != "bad-token") return false
+        val roomId = lastPairedRoomId ?: return false
+        removePairing(roomId)
+        return true
+    }
+
+    /** 连接成功后用桌面端真实设备名更新对应历史记录的显示名。 */
+    private fun updatePairingLabel(roomId: String, deviceName: String) {
+        val ctx = appContext ?: return
+        if (deviceName.isBlank()) return
+        val payload = recentPairings(ctx)
+            .firstOrNull { runCatching { JSONObject(it.payload).optString("roomId") == roomId }.getOrDefault(false) }
+            ?.payload ?: return
+        savePairing(ctx, payload, roomId, deviceName)
+    }
+
 
     private fun ensureFactory() {
         if (factory != null) return
@@ -170,12 +254,16 @@ object ConnectionManager : SignalingClient.Listener {
 
     override fun onError(reason: String) {
         signalingReady = false
-        setStatus("错误: $reason", false)
+        if (removeLastPairingIfExpired(reason)) {
+            setStatus("历史连接已失效，请重新扫码", false)
+        } else {
+            setStatus("错误: $reason", false)
+        }
     }
 
     override fun onClosed() {
         signalingReady = false
-        setStatus("信令断开", false)
+        setStatus("桌面断开", false)
     }
 
     // --- WebRTC ------------------------------------------------------------
@@ -290,11 +378,13 @@ object ConnectionManager : SignalingClient.Listener {
 
     private fun upsertSession(msg: JSONObject) {
         val id = msg.getString("sessionId")
+        val device = msg.optString("device")
+        lastPairedRoomId?.let { if (device.isNotBlank()) updatePairingLabel(it, device) }
         val existing = sessions.firstOrNull { it.id == id }
         if (existing == null) {
             sessions.add(
                 0,
-                Session(id, msg.optString("app"), msg.optString("title"))
+                Session(id, msg.optString("app"), msg.optString("title"), device)
             )
         } else if (sessions.indexOf(existing) != 0) {
             // 桌面端重新聚焦该窗口，置顶以突出当前焦点
@@ -320,6 +410,16 @@ object ConnectionManager : SignalingClient.Listener {
         main.post { observers.forEach { it.onMessage(session.id, m) } }
     }
 
+    /** 重新发送已有历史文本到桌面，但不新增历史记录。 */
+    fun resendText(session: Session, text: String) {
+        if (text.isBlank()) return
+        val json = JSONObject()
+            .put("type", "text")
+            .put("text", text)
+            .put("sessionId", session.id)
+        sendJson(json)
+    }
+
     /** 发送操作指令到桌面：enter / backspace / selectAll / clear。 */
     fun sendAction(session: Session, action: String) {
         if (!isConnected) return
@@ -342,6 +442,7 @@ object ConnectionManager : SignalingClient.Listener {
         sessions.clear()
         activeSessionId = null
         setStatus("未连接", false)
+        notifySessions()
     }
 }
 

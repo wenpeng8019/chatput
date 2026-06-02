@@ -11,6 +11,7 @@
         <item name="colorOnSurface">@color/chatput_text_primary</item>
         <item name="colorOnBackground">@color/chatput_text_primary</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
         <item name="android:navigationBarColor">@color/chatput_bg</item>
         <item name="materialButtonStyle">@style/Chatput.Button</item>
     </style>
@@ -47,4 +48,5 @@
         <item name="android:insetTop">0dp</item>
         <item name="android:insetBottom">0dp</item>
     </style>
+
 </resources>

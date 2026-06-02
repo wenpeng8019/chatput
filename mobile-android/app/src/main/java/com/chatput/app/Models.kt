@@ -5,6 +5,7 @@ data class Session(
     val id: String,
     val app: String,
     val title: String,
+    val device: String = "",
     val messages: MutableList<ChatMessage> = mutableListOf()
 )
 

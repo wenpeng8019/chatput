@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="@dimen/composer_corner_radius"
+    android:height="@dimen/composer_corner_radius"
+    android:viewportWidth="34"
+    android:viewportHeight="34">
+
+    <!-- viewport 尺寸 = 面板圆角半径(34)，曲率中心(34,34)、半径34，与面板圆角同心同径。
+         物理大小由 @dimen/composer_corner_radius 驱动，与面板圆角共享单一来源。
+         取靠近顶端的一段短弧（约50°），图片左上角对齐面板左上角时恰好压在圆角曲线上。 -->
+    <path
+        android:pathData="M2.70,20.72 A34,34 0 0 1 20.72,2.70"
+        android:strokeColor="@color/chatput_text_tertiary"
+        android:strokeWidth="2.6"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+</vector>

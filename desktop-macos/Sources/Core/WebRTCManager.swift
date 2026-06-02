@@ -100,6 +100,7 @@ final class WebRTCManager: NSObject {
             "sessionId": session.id,
             "app": session.app,
             "title": session.title,
+            "device": Host.current().localizedName ?? ProcessInfo.processInfo.hostName,
             "ts": session.ts,
         ]
         sendMessage(obj)

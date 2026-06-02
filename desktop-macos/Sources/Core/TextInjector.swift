@@ -38,9 +38,14 @@ final class TextInjector {
     /// 支持的操作按键。
     enum Action: String {
         case enter      // 回车（触发执行/换行）
+        case shiftEnter // Shift+回车（多数聊天软件为换行）
         case backspace  // 退格（删除前一个字符）
         case selectAll  // 全选（Cmd+A）
         case clear      // 清空输入（全选 + 退格）
+        case cursorLeft  // 光标左移一个字符
+        case cursorRight // 光标右移一个字符
+        case cursorUp    // 光标上移一行
+        case cursorDown  // 光标下移一行
     }
 
     /// 执行一个操作。
@@ -48,6 +53,8 @@ final class TextInjector {
         switch action {
         case .enter:
             tapKey(AppConfig.KeyCode.return)
+        case .shiftEnter:
+            tapKey(AppConfig.KeyCode.return, flags: .maskShift)   // Shift+Return
         case .backspace:
             tapKey(AppConfig.KeyCode.delete)
         case .selectAll:
@@ -55,7 +62,92 @@ final class TextInjector {
         case .clear:
             tapKey(AppConfig.KeyCode.a, flags: .maskCommand)   // Cmd+A
             tapKey(AppConfig.KeyCode.delete)
+        case .cursorLeft:
+            tapKey(AppConfig.KeyCode.leftArrow)
+        case .cursorRight:
+            tapKey(AppConfig.KeyCode.rightArrow)
+        case .cursorUp:
+            moveVertically(up: true)
+        case .cursorDown:
+            moveVertically(up: false)
         }
+    }
+
+    // MARK: - 上下行边界处理
+
+    /// 根据用户设置处理光标上/下移：在首/末行边界时可选择停住或循环。
+    private func moveVertically(up: Bool) {
+        let mode = AppSettings.shared.cursorBoundary
+        let arrow = up ? AppConfig.KeyCode.upArrow : AppConfig.KeyCode.downArrow
+
+        // 系统默认，或拿不到光标行信息（如非原生输入框）时，直接发方向键。
+        guard mode != .native, let pos = caretLinePosition() else {
+            tapKey(arrow)
+            return
+        }
+
+        let atBoundary = up ? pos.atFirst : pos.atLast
+        guard atBoundary else {
+            tapKey(arrow)
+            return
+        }
+
+        switch mode {
+        case .native:
+            tapKey(arrow)
+        case .stop:
+            break   // 已在首/末行，忽略本次移动
+        case .wrap:
+            // 首行再上 → 跳到全文结尾（末行）；末行再下 → 跳到全文开头（首行）。
+            if up {
+                tapKey(AppConfig.KeyCode.downArrow, flags: .maskCommand)
+            } else {
+                tapKey(AppConfig.KeyCode.upArrow, flags: .maskCommand)
+            }
+        }
+    }
+
+    /// 读取当前焦点输入框中插入点是否位于首行/末行。
+    /// 依赖辅助功能文本属性；不支持时返回 nil（调用方退回原生行为）。
+    private func caretLinePosition() -> (atFirst: Bool, atLast: Bool)? {
+        let system = AXUIElementCreateSystemWide()
+        var focused: AnyObject?
+        guard AXUIElementCopyAttributeValue(system, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focusedRef = focused else { return nil }
+        let element = focusedRef as! AXUIElement
+
+        // 插入点字符索引。
+        var rangeRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeRef) == .success,
+              let rv = rangeRef else { return nil }
+        var range = CFRange()
+        guard AXValueGetValue(rv as! AXValue, .cfRange, &range) else { return nil }
+
+        // 文本总字符数。
+        var countRef: AnyObject?
+        guard AXUIElementCopyAttributeValue(element, kAXNumberOfCharactersAttribute as CFString, &countRef) == .success,
+              let total = countRef as? Int else { return nil }
+        guard total >= 0 else { return nil }
+
+        func line(forCharIndex index: Int) -> Int? {
+            var i = index
+            guard let arg = CFNumberCreate(nil, .intType, &i) else { return nil }
+            var result: AnyObject?
+            guard AXUIElementCopyParameterizedAttributeValue(
+                    element,
+                    kAXLineForIndexParameterizedAttribute as CFString,
+                    arg, &result) == .success,
+                  let lineNum = result as? Int else { return nil }
+            return lineNum
+        }
+
+        let caretIndex = max(0, min(range.location, max(0, total - 1)))
+        let lastIndex = max(0, total - 1)
+        guard let firstLine = line(forCharIndex: 0),
+              let caretLine = line(forCharIndex: caretIndex),
+              let lastLine = line(forCharIndex: lastIndex) else { return nil }
+
+        return (atFirst: caretLine <= firstLine, atLast: caretLine >= lastLine)
     }
 
     /// 模拟一次按键（按下 + 抬起），可带修饰键。

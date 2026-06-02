@@ -23,17 +23,49 @@ enum TransportMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var label: String {
         switch self {
-        case .webrtc: return "WebRTC P2P"
-        case .websocket: return "WebSocket 中继"
+        case .webrtc: return L.t("WebRTC P2P", "WebRTC P2P")
+        case .websocket: return L.t("WebSocket 中继", "WebSocket Relay")
         }
     }
 
     var note: String {
         switch self {
         case .webrtc:
-            return "优先直连，延迟更低；在公共 Wi-Fi 下成功率受网络环境影响。"
+            return L.t("优先直连，延迟更低；在公共 Wi-Fi 下成功率受网络环境影响。",
+                       "Prefers a direct connection with lower latency; success rate on public Wi-Fi depends on the network.")
         case .websocket:
-            return "所有业务消息走服务器中继；公网与受限网络更稳定。"
+            return L.t("所有业务消息走服务器中继；公网与受限网络更稳定。",
+                       "All traffic is relayed through the server; more stable on public or restricted networks.")
+        }
+    }
+}
+
+/// 拖动光标上/下移到首行或末行边界时的行为。
+/// macOS 原生在首行再上移会跳到全文开头、末行再下移会跳到全文结尾。
+enum CursorBoundaryMode: String, CaseIterable, Identifiable {
+    case native  // 系统默认：到边界跳到全文开头/结尾
+    case stop    // 到首/末行后停住不动
+    case wrap    // 循环：首行再上跳到末行，末行再下跳到首行
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .native: return L.t("系统默认（跳到开头/结尾）", "System default (jump to start/end)")
+        case .stop:   return L.t("停在首/末行", "Stop at first/last line")
+        case .wrap:   return L.t("循环到另一端", "Wrap to the other end")
+        }
+    }
+    var note: String {
+        switch self {
+        case .native:
+            return L.t("保持 macOS 原生行为：在第一行继续上移会跳到全文开头，最后一行继续下移会跳到全文结尾。",
+                       "Keeps the native macOS behavior: moving up on the first line jumps to the very start, and down on the last line jumps to the very end.")
+        case .stop:
+            return L.t("光标到达首行或末行后，继续上/下移将被忽略，不再跳到开头/结尾（需辅助功能权限）。",
+                       "Once the caret reaches the first or last line, further up/down moves are ignored instead of jumping to the start/end (requires Accessibility permission).")
+        case .wrap:
+            return L.t("在首行继续上移会跳到末行，在末行继续下移会跳到首行（需辅助功能权限）。",
+                       "Moving up on the first line jumps to the last line, and down on the last line jumps to the first line (requires Accessibility permission).")
         }
     }
 }
@@ -49,6 +81,7 @@ final class AppSettings: ObservableObject {
         static let ipOverride = "signaling.ipOverride"
         static let externalURL = "signaling.externalURL"
         static let language = "app.language"
+        static let cursorBoundary = "cursor.boundaryMode"
     }
 
     /// 配置发生影响连接的变更时触发（由协调器订阅以重启/重连）。
@@ -78,6 +111,10 @@ final class AppSettings: ObservableObject {
     @Published var language: AppLanguage {
         didSet { defaults.set(language.rawValue, forKey: Key.language) }
     }
+    /// 拖动光标到首/末行边界时的行为。
+    @Published var cursorBoundary: CursorBoundaryMode {
+        didSet { defaults.set(cursorBoundary.rawValue, forKey: Key.cursorBoundary) }
+    }
     /// 开机自启动（直接读写系统状态，不持久化到 UserDefaults）。
     @Published var launchAtLogin: Bool {
         didSet { LoginItem.setEnabled(launchAtLogin) }
@@ -98,6 +135,8 @@ final class AppSettings: ObservableObject {
         defaults.set(normalizedExternalURL, forKey: Key.externalURL)
         let lang = defaults.string(forKey: Key.language) ?? AppLanguage.system.rawValue
         language = AppLanguage(rawValue: lang) ?? .system
+        let boundaryRaw = defaults.string(forKey: Key.cursorBoundary) ?? CursorBoundaryMode.native.rawValue
+        cursorBoundary = CursorBoundaryMode(rawValue: boundaryRaw) ?? .native
         launchAtLogin = LoginItem.isEnabled
     }
 

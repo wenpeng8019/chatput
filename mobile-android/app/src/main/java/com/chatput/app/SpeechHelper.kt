@@ -174,6 +174,19 @@ class SpeechHelper(private val context: Context) {
         callback = null
     }
 
+    /** 取消当前录音并丢弃结果（不回调 onResult/onError）。 */
+    fun cancel() {
+        if (!recording) return
+        recording = false
+        try {
+            audioRecord?.stop()
+        } catch (_: Exception) {
+        }
+        audioRecord?.release()
+        audioRecord = null
+        synchronized(samples) { samples.clear() }
+    }
+
     private fun postError(msg: String) {
         main.post { callback?.onError(msg) }
     }

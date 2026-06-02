@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 语音输入面板圆角半径。拖拽握把的弧线与此值同心同径，二者必须一致，
+         共享此单一来源，避免再次失配。 -->
+    <dimen name="composer_corner_radius">34dp</dimen>
+</resources>

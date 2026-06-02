@@ -31,7 +31,7 @@ class SessionAdapter(
     override fun onBindViewHolder(holder: VH, position: Int) {
         val s = items[position]
         holder.app.text = s.app.ifBlank { "未知应用" }
-        holder.title.text = s.title.ifBlank { "(无标题)" }
+        holder.title.text = s.device.ifBlank { s.title.ifBlank { "当前窗口" } }
 
         // 桌面端当前聚焦的会话：高亮 + 焦点徽标
         val active = s.id == ConnectionManager.activeSessionId

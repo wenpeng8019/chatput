@@ -363,6 +363,7 @@ final class Coordinator {
             "sessionId": session.id,
             "app": session.app,
             "title": session.title,
+            "device": Host.current().localizedName ?? ProcessInfo.processInfo.hostName,
             "ts": session.ts,
         ]
         sendPeerMessage(payload)

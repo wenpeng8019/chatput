@@ -22,33 +22,60 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent">
 
-        <LinearLayout
+        <androidx.constraintlayout.widget.ConstraintLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
             android:paddingHorizontal="20dp"
             android:paddingTop="18dp"
             android:paddingBottom="16dp">
 
             <TextView
                 android:id="@+id/app_title"
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:textColor="@color/chatput_text_primary"
                 android:textSize="24sp"
-                android:textStyle="bold" />
+                android:textStyle="bold"
+                app:layout_constraintEnd_toStartOf="@id/btn_header_menu"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
 
             <TextView
                 android:id="@+id/subtitle"
-                android:layout_width="match_parent"
+                android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:ellipsize="end"
                 android:maxLines="1"
                 android:textColor="@color/chatput_text_secondary"
-                android:textSize="14sp" />
+                android:textSize="14sp"
+                app:layout_constraintEnd_toStartOf="@id/btn_header_menu"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toBottomOf="@id/app_title" />
 
-        </LinearLayout>
+            <FrameLayout
+                android:id="@+id/btn_header_menu"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:background="@drawable/bg_action_circle"
+                android:clickable="true"
+                android:contentDescription="更多操作"
+                android:focusable="true"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="parent">
+
+                <ImageView
+                    android:layout_width="22dp"
+                    android:layout_height="22dp"
+                    android:layout_gravity="center"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_more_vert"
+                    app:tint="@color/chatput_text_secondary" />
+
+            </FrameLayout>
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
 
     </com.google.android.material.card.MaterialCardView>
 
@@ -64,20 +91,31 @@
         app:layout_constraintTop_toBottomOf="@id/chat_header"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/composer_card" />
+        app:layout_constraintBottom_toTopOf="@id/hint" />
+
+    <TextView
+        android:id="@+id/hint"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:gravity="center"
+        android:text="按住说话"
+        android:textColor="@color/chatput_text_tertiary"
+        android:textSize="13sp"
+        app:layout_constraintBottom_toTopOf="@id/composer_card"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
 
     <com.google.android.material.card.MaterialCardView
-        android:id="@+id/composer_card"
+        android:id="@+id/text_input_card"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginStart="18dp"
-        android:layout_marginEnd="18dp"
-        android:layout_marginBottom="16dp"
+        android:visibility="gone"
         app:cardBackgroundColor="@color/chatput_surface"
-        app:cardCornerRadius="26dp"
+        app:cardCornerRadius="0dp"
         app:cardElevation="0dp"
         app:strokeColor="@color/chatput_line"
-        app:strokeWidth="1dp"
+        app:strokeWidth="0dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
@@ -85,78 +123,246 @@
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:paddingHorizontal="16dp"
-            android:paddingTop="14dp"
-            android:paddingBottom="14dp">
+            android:orientation="vertical">
 
-            <TextView
-                android:id="@+id/hint"
+            <View
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:gravity="center"
-                android:paddingBottom="10dp"
-                android:text="按住说话"
-                android:textColor="@color/chatput_text_tertiary"
-                android:textSize="14sp" />
+                android:layout_height="1dp"
+                android:background="@color/chatput_line" />
 
             <LinearLayout
-                android:id="@+id/action_buttons"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
+                android:gravity="bottom"
                 android:orientation="horizontal"
-                android:paddingBottom="12dp">
+                android:paddingStart="14dp"
+                android:paddingTop="10dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="10dp">
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btn_enter"
-            style="@style/Chatput.ActionButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginEnd="8dp"
-            android:minWidth="0dp"
-            android:text="回车" />
+                <EditText
+                    android:id="@+id/input_text"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:background="@drawable/bg_input_field"
+                    android:gravity="center_vertical"
+                    android:hint="输入文字…"
+                    android:imeOptions="actionSend|flagNoExtractUi"
+                    android:inputType="textMultiLine|textCapSentences"
+                    android:maxLines="4"
+                    android:minHeight="40dp"
+                    android:paddingStart="16dp"
+                    android:paddingEnd="16dp"
+                    android:paddingVertical="9dp"
+                    android:textColor="@color/chatput_text_primary"
+                    android:textColorHint="@color/chatput_text_tertiary"
+                    android:textSize="16sp" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btn_backspace"
-            style="@style/Chatput.ActionButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginEnd="8dp"
-            android:minWidth="0dp"
-            android:text="回退" />
+                <FrameLayout
+                    android:id="@+id/btn_send"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:layout_marginStart="10dp"
+                    android:background="@drawable/bg_voice_orb"
+                    android:clickable="true"
+                    android:contentDescription="发送文字"
+                    android:focusable="true">
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btn_select_all"
-            style="@style/Chatput.ActionButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:layout_marginEnd="8dp"
-            android:minWidth="0dp"
-            android:text="全选" />
+                    <ImageView
+                        android:layout_width="19dp"
+                        android:layout_height="19dp"
+                        android:layout_gravity="center"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_send"
+                        app:tint="@color/chatput_on_accent" />
 
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/btn_clear"
-            style="@style/Chatput.ActionButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:minWidth="0dp"
-            android:text="清空" />
+                </FrameLayout>
 
             </LinearLayout>
-
-            <com.google.android.material.button.MaterialButton
-                android:id="@+id/btn_talk"
-                style="@style/Chatput.PrimaryButton"
-                android:layout_width="match_parent"
-                android:layout_height="56dp"
-                android:text="按住说话" />
 
         </LinearLayout>
 
     </com.google.android.material.card.MaterialCardView>
+
+    <!-- 全宽拖拽感应层：覆盖整个语音区（含上方溢出与两侧 margin），位于面板下层。
+         面板上的三个按钮在上层照常响应；面板空白处与两侧留白的触摸会穿透到本层，向上拖拽即呼出文字输入。 -->
+    <View
+        android:id="@+id/drag_handle"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="-22dp"
+        android:clickable="true"
+        android:focusable="true"
+        android:contentDescription="向上拖拽，呼出文字输入"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="@id/composer_card"
+        app:layout_constraintBottom_toBottomOf="parent" />
+
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/composer_card"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="18dp"
+        android:layout_marginEnd="18dp"
+        android:layout_marginBottom="6dp"
+        app:cardBackgroundColor="@color/chatput_surface"
+        app:cardCornerRadius="@dimen/composer_corner_radius"
+        app:cardElevation="0dp"
+        app:strokeColor="@color/chatput_line"
+        app:strokeWidth="1dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <androidx.constraintlayout.widget.ConstraintLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:paddingStart="20dp"
+            android:paddingTop="13dp"
+            android:paddingEnd="20dp"
+            android:paddingBottom="13dp">
+
+            <View
+                android:id="@+id/orb_halo"
+                android:layout_width="106dp"
+                android:layout_height="106dp"
+                android:alpha="0"
+                android:background="@drawable/bg_orb_halo"
+                app:layout_constraintBottom_toBottomOf="@id/btn_talk"
+                app:layout_constraintEnd_toEndOf="@id/btn_talk"
+                app:layout_constraintStart_toStartOf="@id/btn_talk"
+                app:layout_constraintTop_toTopOf="@id/btn_talk" />
+
+            <FrameLayout
+                android:id="@+id/btn_talk"
+                android:layout_width="78dp"
+                android:layout_height="78dp"
+                android:background="@drawable/bg_voice_orb"
+                android:clickable="true"
+                android:contentDescription="按住说话"
+                android:focusable="true"
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent">
+
+                <ImageView
+                    android:layout_width="32dp"
+                    android:layout_height="32dp"
+                    android:layout_gravity="center"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_mic"
+                    app:tint="@color/chatput_on_accent" />
+
+            </FrameLayout>
+
+            <FrameLayout
+                android:id="@+id/btn_backspace"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:background="@drawable/bg_action_circle"
+                android:clickable="true"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:contentDescription="回删，长按清空"
+                android:focusable="true"
+                app:layout_constraintBottom_toBottomOf="@id/btn_talk"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintEnd_toStartOf="@id/btn_talk"
+                app:layout_constraintTop_toTopOf="@id/btn_talk">
+
+                <ImageView
+                    android:layout_width="23dp"
+                    android:layout_height="23dp"
+                    android:layout_gravity="center"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_nav_backspace"
+                    app:tint="@color/chatput_text_secondary" />
+
+                <ProgressBar
+                    android:id="@+id/clear_progress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="78dp"
+                    android:layout_height="78dp"
+                    android:layout_gravity="center"
+                    android:indeterminate="false"
+                    android:max="100"
+                    android:progress="0"
+                    android:progressDrawable="@drawable/progress_ring_clear"
+                    android:visibility="gone" />
+
+            </FrameLayout>
+
+            <FrameLayout
+                android:id="@+id/btn_enter"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:background="@drawable/bg_action_circle"
+                android:clickable="true"
+                android:clipChildren="false"
+                android:clipToPadding="false"
+                android:contentDescription="短按换行，长按回车"
+                android:focusable="true"
+                app:layout_constraintBottom_toBottomOf="@id/btn_talk"
+                app:layout_constraintStart_toEndOf="@id/btn_talk"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintTop_toTopOf="@id/btn_talk">
+
+                <ImageView
+                    android:layout_width="23dp"
+                    android:layout_height="23dp"
+                    android:layout_gravity="center"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_nav_enter"
+                    app:tint="@color/chatput_text_secondary" />
+
+                <ProgressBar
+                    android:id="@+id/enter_progress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="78dp"
+                    android:layout_height="78dp"
+                    android:layout_gravity="center"
+                    android:indeterminate="false"
+                    android:max="100"
+                    android:progress="0"
+                    android:progressDrawable="@drawable/progress_ring_clear"
+                    android:visibility="gone" />
+
+            </FrameLayout>
+
+        </androidx.constraintlayout.widget.ConstraintLayout>
+
+    </com.google.android.material.card.MaterialCardView>
+
+    <!-- 圆角握把装饰（仅视觉，不拦截触摸）：精确覆盖语音面板左上 / 右上圆角弧线 -->
+    <FrameLayout
+        android:id="@+id/grab_decor"
+        android:layout_width="0dp"
+        android:layout_height="@dimen/composer_corner_radius"
+        android:importantForAccessibility="no"
+        app:layout_constraintEnd_toEndOf="@id/composer_card"
+        app:layout_constraintStart_toStartOf="@id/composer_card"
+        app:layout_constraintTop_toTopOf="@id/composer_card">
+
+        <ImageView
+            android:layout_width="@dimen/composer_corner_radius"
+            android:layout_height="@dimen/composer_corner_radius"
+            android:layout_gravity="start|top"
+            android:contentDescription="@null"
+            android:src="@drawable/ic_grab_corner" />
+
+        <ImageView
+            android:layout_width="@dimen/composer_corner_radius"
+            android:layout_height="@dimen/composer_corner_radius"
+            android:layout_gravity="end|top"
+            android:contentDescription="@null"
+            android:scaleX="-1"
+            android:src="@drawable/ic_grab_corner" />
+
+    </FrameLayout>
 
 </androidx.constraintlayout.widget.ConstraintLayout>

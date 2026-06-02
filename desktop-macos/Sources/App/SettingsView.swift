@@ -37,20 +37,6 @@ struct SettingsView: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 HStack(spacing: 12) {
-                    Text(L.t("语言", "Language"))
-                        .font(.system(size: 12))
-                        .frame(width: 90, alignment: .leading)
-                    Picker("", selection: $settings.language) {
-                        ForEach(AppLanguage.allCases) { lang in
-                            Text(lang.label).tag(lang)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(width: 180)
-                    Spacer()
-                }
-
-                HStack(spacing: 12) {
                     Text(L.t("开机自动运行", "Launch at login"))
                         .font(.system(size: 12))
                         .frame(width: 90, alignment: .leading)
@@ -72,7 +58,8 @@ struct SettingsView: View {
                             }
                         }
                         .labelsHidden()
-                        .frame(width: 180)
+                        .frame(width: 260)
+                        .id(settings.language)
 
                         Text(settings.transport.note)
                             .font(.system(size: 11))
@@ -80,6 +67,45 @@ struct SettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
+                    Spacer()
+                }
+
+                HStack(alignment: .top, spacing: 12) {
+                    Text(L.t("上下行边界", "Up/Down edge"))
+                        .font(.system(size: 12))
+                        .frame(width: 90, alignment: .leading)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("", selection: $settings.cursorBoundary) {
+                            ForEach(CursorBoundaryMode.allCases) { mode in
+                                Text(mode.label).tag(mode)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 260)
+                        .id(settings.language)
+
+                        Text(settings.cursorBoundary.note)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    Spacer()
+                }
+
+                HStack(spacing: 12) {
+                    Text(L.t("语言", "Language"))
+                        .font(.system(size: 12))
+                        .frame(width: 90, alignment: .leading)
+                    Picker("", selection: $settings.language) {
+                        ForEach(AppLanguage.allCases) { lang in
+                            Text(lang.label).tag(lang)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 260)
+                    .id(settings.language)
                     Spacer()
                 }
             }
