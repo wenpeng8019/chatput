@@ -10,11 +10,11 @@
 		android:id="@+id/header_card"
 		android:layout_width="0dp"
 		android:layout_height="wrap_content"
-		android:layout_marginStart="18dp"
+		android:layout_marginStart="@dimen/screen_margin"
 		android:layout_marginTop="20dp"
-		android:layout_marginEnd="18dp"
+		android:layout_marginEnd="@dimen/screen_margin"
 		app:cardBackgroundColor="@color/chatput_surface"
-		app:cardCornerRadius="22dp"
+		app:cardCornerRadius="@dimen/radius_panel"
 		app:cardElevation="0dp"
 		app:strokeColor="@color/chatput_line"
 		app:strokeWidth="1dp"
@@ -27,10 +27,10 @@
 			android:layout_width="match_parent"
 			android:layout_height="wrap_content"
 			android:orientation="vertical"
-			android:paddingStart="16dp"
-			android:paddingTop="18dp"
-			android:paddingEnd="18dp"
-			android:paddingBottom="18dp">
+			android:paddingStart="@dimen/space_4"
+			android:paddingTop="@dimen/screen_margin"
+			android:paddingEnd="@dimen/screen_margin"
+			android:paddingBottom="@dimen/screen_margin">
 
 			<TextView
 				android:id="@+id/app_label"
@@ -48,7 +48,7 @@
 				android:layout_marginTop="10dp"
 				android:text="把桌面输入做得更自然"
 				android:textColor="@color/chatput_text_primary"
-				android:textSize="26sp"
+				android:textSize="24sp"
 				android:textStyle="bold" />
 
 			<TextView
@@ -83,9 +83,9 @@
 		android:layout_width="0dp"
 		android:layout_height="0dp"
 		android:clipToPadding="false"
-		android:paddingStart="16dp"
+		android:paddingStart="@dimen/space_4"
 		android:paddingTop="14dp"
-		android:paddingEnd="16dp"
+		android:paddingEnd="@dimen/space_4"
 		android:paddingBottom="110dp"
 		app:layout_constraintBottom_toBottomOf="parent"
 		app:layout_constraintStart_toStartOf="parent"
@@ -98,7 +98,7 @@
 		android:layout_height="wrap_content"
 		android:layout_marginStart="36dp"
 		android:layout_marginEnd="36dp"
-		android:layout_marginBottom="24dp"
+		android:layout_marginBottom="@dimen/space_6"
 		android:orientation="vertical"
 		android:visibility="gone"
 		app:layout_constraintBottom_toTopOf="@id/empty"
@@ -143,7 +143,7 @@
 		android:layout_height="wrap_content"
 		android:layout_marginBottom="24dp"
 		android:contentDescription="扫码配对"
-		android:src="@android:drawable/ic_menu_camera"
+		android:src="@drawable/ic_scan"
 		app:backgroundTint="@color/chatput_accent"
 		app:tint="@color/chatput_on_accent"
 		app:layout_constraintBottom_toBottomOf="parent"

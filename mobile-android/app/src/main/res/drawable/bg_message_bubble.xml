@@ -3,8 +3,8 @@
     android:shape="rectangle">
     <solid android:color="@color/chatput_message_bubble" />
     <corners
-        android:topLeftRadius="22dp"
-        android:topRightRadius="22dp"
-        android:bottomLeftRadius="22dp"
-        android:bottomRightRadius="8dp" />
+        android:topLeftRadius="@dimen/radius_bubble_large"
+        android:topRightRadius="@dimen/radius_bubble_large"
+        android:bottomLeftRadius="@dimen/radius_bubble_large"
+        android:bottomRightRadius="@dimen/radius_bubble_tail" />
 </shape>

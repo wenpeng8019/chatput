@@ -1,5 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <dimen name="space_1">4dp</dimen>
+    <dimen name="space_2">8dp</dimen>
+    <dimen name="space_3">12dp</dimen>
+    <dimen name="space_4">16dp</dimen>
+    <dimen name="space_5">20dp</dimen>
+    <dimen name="space_6">24dp</dimen>
+
+    <dimen name="screen_margin">18dp</dimen>
+    <dimen name="radius_panel">22dp</dimen>
+    <dimen name="radius_list_item">18dp</dimen>
+    <dimen name="radius_input">14dp</dimen>
+    <dimen name="radius_popup">20dp</dimen>
+    <dimen name="radius_bubble_large">20dp</dimen>
+    <dimen name="radius_bubble_tail">7dp</dimen>
+    <dimen name="control_small">40dp</dimen>
+    <dimen name="control_medium">56dp</dimen>
+    <dimen name="control_primary">78dp</dimen>
+
     <!-- 语音输入面板圆角半径。拖拽握把的弧线与此值同心同径，二者必须一致，
          共享此单一来源，避免再次失配。 -->
     <dimen name="composer_corner_radius">34dp</dimen>

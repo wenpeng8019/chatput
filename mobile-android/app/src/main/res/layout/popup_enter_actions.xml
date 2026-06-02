@@ -11,7 +11,7 @@
         android:layout_height="wrap_content"
         android:layout_margin="14dp"
         app:cardBackgroundColor="@color/chatput_surface"
-        app:cardCornerRadius="20dp"
+        app:cardCornerRadius="@dimen/radius_popup"
         app:cardElevation="8dp"
         app:strokeColor="@color/chatput_line"
         app:strokeWidth="1dp">

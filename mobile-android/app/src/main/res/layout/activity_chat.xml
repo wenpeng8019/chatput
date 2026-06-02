@@ -10,11 +10,11 @@
         android:id="@+id/chat_header"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginStart="18dp"
-        android:layout_marginTop="18dp"
-        android:layout_marginEnd="18dp"
+        android:layout_marginStart="@dimen/screen_margin"
+        android:layout_marginTop="@dimen/screen_margin"
+        android:layout_marginEnd="@dimen/screen_margin"
         app:cardBackgroundColor="@color/chatput_surface"
-        app:cardCornerRadius="26dp"
+        app:cardCornerRadius="@dimen/radius_panel"
         app:cardElevation="0dp"
         app:strokeColor="@color/chatput_line"
         app:strokeWidth="1dp"
@@ -25,16 +25,16 @@
         <androidx.constraintlayout.widget.ConstraintLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:paddingHorizontal="20dp"
-            android:paddingTop="18dp"
-            android:paddingBottom="16dp">
+            android:paddingHorizontal="@dimen/space_5"
+            android:paddingTop="@dimen/screen_margin"
+            android:paddingBottom="@dimen/space_4">
 
             <TextView
                 android:id="@+id/app_title"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:textColor="@color/chatput_text_primary"
-                android:textSize="24sp"
+                android:textSize="22sp"
                 android:textStyle="bold"
                 app:layout_constraintEnd_toStartOf="@id/btn_header_menu"
                 app:layout_constraintStart_toStartOf="parent"
@@ -48,15 +48,15 @@
                 android:ellipsize="end"
                 android:maxLines="1"
                 android:textColor="@color/chatput_text_secondary"
-                android:textSize="14sp"
+                android:textSize="13sp"
                 app:layout_constraintEnd_toStartOf="@id/btn_header_menu"
                 app:layout_constraintStart_toStartOf="parent"
                 app:layout_constraintTop_toBottomOf="@id/app_title" />
 
             <FrameLayout
                 android:id="@+id/btn_header_menu"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
+                android:layout_width="@dimen/control_small"
+                android:layout_height="@dimen/control_small"
                 android:background="@drawable/bg_action_circle"
                 android:clickable="true"
                 android:contentDescription="更多操作"
@@ -151,7 +151,7 @@
                     android:imeOptions="actionSend|flagNoExtractUi"
                     android:inputType="textMultiLine|textCapSentences"
                     android:maxLines="4"
-                    android:minHeight="40dp"
+                    android:minHeight="@dimen/control_small"
                     android:paddingStart="16dp"
                     android:paddingEnd="16dp"
                     android:paddingVertical="9dp"
@@ -161,8 +161,8 @@
 
                 <FrameLayout
                     android:id="@+id/btn_send"
-                    android:layout_width="40dp"
-                    android:layout_height="40dp"
+                    android:layout_width="@dimen/control_small"
+                    android:layout_height="@dimen/control_small"
                     android:layout_marginStart="10dp"
                     android:background="@drawable/bg_voice_orb"
                     android:clickable="true"
@@ -204,8 +204,8 @@
         android:id="@+id/composer_card"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:layout_marginStart="18dp"
-        android:layout_marginEnd="18dp"
+        android:layout_marginStart="@dimen/screen_margin"
+        android:layout_marginEnd="@dimen/screen_margin"
         android:layout_marginBottom="6dp"
         app:cardBackgroundColor="@color/chatput_surface"
         app:cardCornerRadius="@dimen/composer_corner_radius"
@@ -221,9 +221,9 @@
             android:layout_height="wrap_content"
             android:clipChildren="false"
             android:clipToPadding="false"
-            android:paddingStart="20dp"
+            android:paddingStart="@dimen/space_5"
             android:paddingTop="13dp"
-            android:paddingEnd="20dp"
+            android:paddingEnd="@dimen/space_5"
             android:paddingBottom="13dp">
 
             <View
@@ -239,8 +239,8 @@
 
             <FrameLayout
                 android:id="@+id/btn_talk"
-                android:layout_width="78dp"
-                android:layout_height="78dp"
+                android:layout_width="@dimen/control_primary"
+                android:layout_height="@dimen/control_primary"
                 android:background="@drawable/bg_voice_orb"
                 android:clickable="true"
                 android:contentDescription="按住说话"
@@ -262,8 +262,8 @@
 
             <FrameLayout
                 android:id="@+id/btn_backspace"
-                android:layout_width="56dp"
-                android:layout_height="56dp"
+                android:layout_width="@dimen/control_medium"
+                android:layout_height="@dimen/control_medium"
                 android:background="@drawable/bg_action_circle"
                 android:clickable="true"
                 android:clipChildren="false"
@@ -286,8 +286,8 @@
                 <ProgressBar
                     android:id="@+id/clear_progress"
                     style="?android:attr/progressBarStyleHorizontal"
-                    android:layout_width="78dp"
-                    android:layout_height="78dp"
+                    android:layout_width="@dimen/control_primary"
+                    android:layout_height="@dimen/control_primary"
                     android:layout_gravity="center"
                     android:indeterminate="false"
                     android:max="100"
@@ -299,8 +299,8 @@
 
             <FrameLayout
                 android:id="@+id/btn_enter"
-                android:layout_width="56dp"
-                android:layout_height="56dp"
+                android:layout_width="@dimen/control_medium"
+                android:layout_height="@dimen/control_medium"
                 android:background="@drawable/bg_action_circle"
                 android:clickable="true"
                 android:clipChildren="false"
@@ -323,8 +323,8 @@
                 <ProgressBar
                     android:id="@+id/enter_progress"
                     style="?android:attr/progressBarStyleHorizontal"
-                    android:layout_width="78dp"
-                    android:layout_height="78dp"
+                    android:layout_width="@dimen/control_primary"
+                    android:layout_height="@dimen/control_primary"
                     android:layout_gravity="center"
                     android:indeterminate="false"
                     android:max="100"
