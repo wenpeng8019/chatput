@@ -36,3 +36,9 @@ mobile-android/app/src/main/assets/sherpa-onnx-*/*.onnx
 mobile-android/app/src/english/assets/sherpa-onnx-*/*.onnx
 # WebRTC 预编译框架（M125，~26MB+）
 desktop-macos/Frameworks/WebRTC.xcframework/
+
+# ===== Rust (desktop-windows) =====
+desktop-windows/.cargo/
+desktop-windows/Cargo.lock
+desktop-windows/target*/
+screen.png

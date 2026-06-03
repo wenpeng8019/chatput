@@ -1,0 +1,72 @@
+[package]
+name = "chatput-desktop"
+version = "0.1.0"
+edition = "2021"
+authors = ["Chatput"]
+description = "Chatput Windows desktop client"
+
+[[bin]]
+name = "chatput"
+path = "src/main.rs"
+
+[build-dependencies]
+# 嵌入应用 manifest：启用 Common Controls v6（现代主题）+ Per-Monitor DPI 感知
+embed-manifest = "1.4"
+# 嵌入 Windows exe 图标资源
+embed-resource = "2"
+
+[dependencies]
+# 异步运行时
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
+futures-util = "0.3"
+
+# WebRTC（桌面端作为 HOST）
+webrtc = "0.11"
+
+# 信令 WebSocket（客户端 + 内置服务器）
+tokio-tungstenite = "0.21"
+
+# JSON
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 二维码
+qrcode = "0.14"
+
+# 随机数（房间号/令牌）
+rand = "0.8"
+
+# 注册表（开机自启）
+winreg = "0.52"
+
+# 日志
+log = "0.4"
+
+[dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_UI_Accessibility",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_Controls",
+    "Win32_System_DataExchange",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+    "Win32_System_Com",
+    "Win32_System_Ole",
+    "Win32_Graphics_Gdi",
+    "Win32_Globalization",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+]
+
+[profile.release]
+opt-level = 2
+lto = false
+strip = true
