@@ -34,7 +34,7 @@ class SessionAdapter(
         holder.title.text = s.device.ifBlank { s.title.ifBlank { "当前窗口" } }
 
         // 桌面端当前聚焦的会话：高亮 + 焦点徽标
-        val active = s.id == ConnectionManager.activeSessionId
+        val active = s.isActive
         holder.accent.visibility = if (active) View.VISIBLE else View.INVISIBLE
         holder.badge.visibility = if (active) View.VISIBLE else View.GONE
         val bgColor = if (active) R.color.chatput_surface_active else R.color.chatput_surface

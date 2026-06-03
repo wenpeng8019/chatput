@@ -72,6 +72,7 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
         adapter = SessionAdapter(ConnectionManager.sessions) { session ->
             startActivity(
                 Intent(this, ChatActivity::class.java)
+                    .putExtra(ChatActivity.EXTRA_CONNECTION_ID, session.connectionId)
                     .putExtra(ChatActivity.EXTRA_SESSION_ID, session.id)
             )
         }
@@ -202,15 +203,15 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
     }
 
     // --- ConnectionManager.Observer ---
-    override fun onStatus(status: String, connected: Boolean) {
+    override fun onStatus(connectionId: String, status: String, connected: Boolean) {
         refresh()
     }
 
-    override fun onSessionsChanged() {
+    override fun onSessionsChanged(connectionId: String) {
         refresh()
     }
 
-    override fun onMessage(sessionId: String, msg: ChatMessage) {}
+    override fun onMessage(connectionId: String, sessionId: String, msg: ChatMessage) {}
 
     private fun applyEdgeToEdgeInsets() {
         val headerTop = 20.dp
@@ -278,14 +279,14 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
         content.findViewById<TextView>(R.id.connection_group_label).text = ConnectionManager.connectionGroupLabel()
         var popup: PopupWindow? = null
 
-        ConnectionManager.connectedDeviceNames().forEach { device ->
+        ConnectionManager.connectedConnections().forEach { desktop ->
             val row = layoutInflater.inflate(R.layout.item_connection_close, container, false)
-            row.findViewById<TextView>(R.id.connection_close_label).text = "关闭 $device"
+            row.findViewById<TextView>(R.id.connection_close_label).text = "关闭 ${desktop.label}"
             row.setOnClickListener {
                 popup?.dismiss()
-                ConnectionManager.disconnect()
+                ConnectionManager.disconnect(desktop.connectionId)
                 refresh()
-                Toast.makeText(this, "已断开 $device", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "已断开 ${desktop.label}", Toast.LENGTH_SHORT).show()
             }
             container.addView(row)
         }

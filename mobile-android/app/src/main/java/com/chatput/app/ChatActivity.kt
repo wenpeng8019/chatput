@@ -37,6 +37,7 @@ import com.chatput.app.databinding.ActivityChatBinding
 class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
 
     companion object {
+        const val EXTRA_CONNECTION_ID = "connection_id"
         const val EXTRA_SESSION_ID = "session_id"
         private const val CLEAR_HOLD_DURATION_MS = 750L
         private const val HINT_DEFAULT = "按住说话"
@@ -60,6 +61,8 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
     private lateinit var speech: SpeechHelper
     private val mainHandler = Handler(Looper.getMainLooper())
     private var session: Session? = null
+    private var connectionId: String = ""
+    private var sessionId: String = ""
 
     private var clearAnimator: ValueAnimator? = null
     private var clearCancelled = false
@@ -109,8 +112,9 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         setContentView(binding.root)
         applyEdgeToEdgeInsets()
 
-        val id = intent.getStringExtra(EXTRA_SESSION_ID)
-        session = ConnectionManager.sessionById(id ?: "")
+        connectionId = intent.getStringExtra(EXTRA_CONNECTION_ID).orEmpty()
+        sessionId = intent.getStringExtra(EXTRA_SESSION_ID).orEmpty()
+        session = ConnectionManager.sessionById(connectionId, sessionId)
         if (session == null) {
             finish()
             return
@@ -906,16 +910,16 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
     }
 
     // --- ConnectionManager.Observer ---
-    override fun onStatus(status: String, connected: Boolean) {
-        if (!connected) {
+    override fun onStatus(connectionId: String, status: String, connected: Boolean) {
+        if (connectionId == this.connectionId && !connected) {
             Toast.makeText(this, "桌面已断开", Toast.LENGTH_SHORT).show()
             returnToSessionList()
         }
     }
 
-    override fun onSessionsChanged() {
-        val currentId = session?.id ?: return
-        val updated = ConnectionManager.sessionById(currentId)
+    override fun onSessionsChanged(connectionId: String) {
+        if (connectionId != this.connectionId) return
+        val updated = ConnectionManager.sessionById(this.connectionId, sessionId)
         if (updated == null) {
             Toast.makeText(this, "桌面窗口已关闭", Toast.LENGTH_SHORT).show()
             returnToSessionList()
@@ -924,8 +928,8 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         }
     }
 
-    override fun onMessage(sessionId: String, msg: ChatMessage) {
-        if (sessionId == session?.id) {
+    override fun onMessage(connectionId: String, sessionId: String, msg: ChatMessage) {
+        if (connectionId == this.connectionId && sessionId == this.sessionId) {
             adapter.notifyItemInserted(adapter.itemCount - 1)
             scrollToBottom()
         }
