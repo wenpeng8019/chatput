@@ -39,6 +39,10 @@ import kotlin.math.min
 /** 会话列表 + 扫码配对入口 */
 class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
 
+    companion object {
+        private const val HEADER_LIST_GAP_DP = 14
+    }
+
     private lateinit var binding: ActivityMainBinding
     private lateinit var adapter: SessionAdapter
     private var headerCompact: Boolean? = null
@@ -70,9 +74,17 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
                     .putExtra(ChatActivity.EXTRA_SESSION_ID, session.id)
             )
         }
-        binding.list.layoutManager = LinearLayoutManager(this)
+        // sessions[0] 永远是桌面当前 focus 会话；列表改为反向布局后，
+        // 第 0 项会稳定贴近底部按钮区域，其余会话向上延展。
+        binding.list.layoutManager = LinearLayoutManager(this).apply {
+            reverseLayout = true
+        }
         binding.list.adapter = adapter
         bindHeaderScrollBehavior()
+        // 反向列表首次排版、会话增减、窗口尺寸变化时，都要重新计算 header 是否已被会话顶到。
+        binding.list.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            updateHeaderScrollOffset()
+        }
         binding.headerCard.bringToFront()
         binding.headerCard.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             updateListTopPadding()
@@ -142,7 +154,7 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
         renderRecentDevices()
         renderStatus(ConnectionManager.status, ConnectionManager.isConnected)
         renderHeaderMode(showSessionShell)
-        binding.root.post { updateHeaderScrollOffset() }
+        binding.list.post { updateHeaderScrollOffset() }
     }
 
     /** 未连接时展示最近 3 个历史设备，点击免扫码直接尝试重连。 */
@@ -325,19 +337,32 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
     }
 
     private fun updateHeaderScrollOffset() {
-        val listCanScroll = binding.list.computeVerticalScrollRange() > binding.list.computeVerticalScrollExtent()
-        val shouldCollapse = headerCompact == true && listCanScroll
-        val headerTop = (binding.headerCard.layoutParams as ViewGroup.MarginLayoutParams).topMargin
-        val maxOffset = if (shouldCollapse) binding.headerCard.height + headerTop else 0
-        val offset = min(binding.list.computeVerticalScrollOffset(), maxOffset)
-        if (offset == headerScrollOffset) return
+        val overflowOffset = computeHeaderOverflowOffset()
+        if (overflowOffset == headerScrollOffset && binding.headerCard.translationY == -overflowOffset.toFloat()) return
 
-        headerScrollOffset = offset
-        binding.headerCard.translationY = -offset.toFloat()
+        headerScrollOffset = overflowOffset
+        binding.headerCard.translationY = -overflowOffset.toFloat()
+    }
+
+    // 反向列表下，computeVerticalScrollOffset() 不能稳定表达“顶部被顶进去多少”，
+    // 因此改为直接看当前最上方可见 item 是否侵入了 list 的 top padding 区域。
+    private fun computeHeaderOverflowOffset(): Int {
+        if (headerCompact != true || binding.list.childCount == 0) return 0
+
+        var minChildTop = Int.MAX_VALUE
+        for (index in 0 until binding.list.childCount) {
+            val childTop = binding.list.getChildAt(index).top
+            if (childTop < minChildTop) minChildTop = childTop
+        }
+
+        val overflow = (binding.list.paddingTop - minChildTop).coerceAtLeast(0)
+        val headerTop = (binding.headerCard.layoutParams as ViewGroup.MarginLayoutParams).topMargin
+        val maxOffset = binding.headerCard.height + headerTop
+        return min(overflow, maxOffset)
     }
 
     private fun updateListTopPadding() {
-        val listTop = binding.headerCard.bottom + 14.dp
+        val listTop = binding.headerCard.bottom + HEADER_LIST_GAP_DP.dp
         val listBottom = 110.dp + systemBottomInset
         if (binding.list.paddingTop == listTop && binding.list.paddingBottom == listBottom) return
         binding.list.updatePadding(top = listTop, bottom = listBottom)

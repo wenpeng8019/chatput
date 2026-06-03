@@ -310,10 +310,10 @@ object ConnectionManager : SignalingClient.Listener {
                 }
             }
 
-            override fun onDataChannel(dc: DataChannel) {
+            override fun onDataChannel(dataChannel: DataChannel) {
                 // HOST 创建的通道，在这里接收
-                dataChannel = dc
-                wireChannel(dc)
+                this@ConnectionManager.dataChannel = dataChannel
+                wireChannel(dataChannel)
             }
         })
     }
@@ -525,23 +525,23 @@ object ConnectionManager : SignalingClient.Listener {
 
 /** 默认空实现的 SDP 观察者 */
 open class SimpleSdpObserver : SdpObserver {
-    override fun onCreateSuccess(p0: SessionDescription) {}
+    override fun onCreateSuccess(desc: SessionDescription) {}
     override fun onSetSuccess() {}
-    override fun onCreateFailure(p0: String?) {}
-    override fun onSetFailure(p0: String?) {}
+    override fun onCreateFailure(error: String?) {}
+    override fun onSetFailure(error: String?) {}
 }
 
 /** 默认空实现的 PeerConnection 观察者 */
 open class SimplePcObserver : PeerConnection.Observer {
-    override fun onSignalingChange(p0: PeerConnection.SignalingState?) {}
-    override fun onIceConnectionChange(p0: PeerConnection.IceConnectionState?) {}
-    override fun onIceConnectionReceivingChange(p0: Boolean) {}
-    override fun onIceGatheringChange(p0: PeerConnection.IceGatheringState?) {}
-    override fun onIceCandidate(p0: IceCandidate) {}
-    override fun onIceCandidatesRemoved(p0: Array<out IceCandidate>?) {}
-    override fun onAddStream(p0: org.webrtc.MediaStream?) {}
-    override fun onRemoveStream(p0: org.webrtc.MediaStream?) {}
-    override fun onDataChannel(p0: DataChannel) {}
+    override fun onSignalingChange(newState: PeerConnection.SignalingState?) {}
+    override fun onIceConnectionChange(newState: PeerConnection.IceConnectionState?) {}
+    override fun onIceConnectionReceivingChange(receiving: Boolean) {}
+    override fun onIceGatheringChange(newState: PeerConnection.IceGatheringState?) {}
+    override fun onIceCandidate(candidate: IceCandidate) {}
+    override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
+    override fun onAddStream(stream: org.webrtc.MediaStream?) {}
+    override fun onRemoveStream(stream: org.webrtc.MediaStream?) {}
+    override fun onDataChannel(dataChannel: DataChannel) {}
     override fun onRenegotiationNeeded() {}
     override fun onConnectionChange(newState: PeerConnection.PeerConnectionState) {}
 }
