@@ -44,4 +44,13 @@
         android:textColor="@color/chatput_accent"
         android:textSize="13sp" />
 
+    <ProgressBar
+        android:id="@+id/device_reconnect_loading"
+        style="?android:attr/progressBarStyleSmall"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:indeterminate="true"
+        android:indeterminateTint="@color/chatput_accent"
+        android:visibility="gone" />
+
 </LinearLayout>

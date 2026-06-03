@@ -53,8 +53,10 @@ object ConnectionManager : SignalingClient.Listener {
         private set
     val isConnected: Boolean
         get() = connectedState
+    val isConnecting: Boolean
+        get() = connectingState
     val hasConnectionContext: Boolean
-        get() = signaling != null || signalingReady || connectedState
+        get() = connectedState
 
     private var factory: PeerConnectionFactory? = null
     private var pc: PeerConnection? = null
@@ -64,6 +66,7 @@ object ConnectionManager : SignalingClient.Listener {
     private var transportMode = TransportMode.WEBRTC
     private var signalingReady = false
     private var connectedState = false
+    private var connectingState = false
     private var manualDisconnectInProgress = false
     private var releasingTransports = false
 
@@ -119,9 +122,10 @@ object ConnectionManager : SignalingClient.Listener {
         transportMode = TransportMode.from(data.optString("transport", "webrtc"))
         connectedState = false
         signalingReady = false
+        connectingState = true
 
         lastPairedRoomId = roomId
-        savePairing(context, qrPayload, roomId)
+        pendingPairingPayload = qrPayload
 
         if (transportMode == TransportMode.WEBRTC) {
             ensureFactory()
@@ -140,6 +144,7 @@ object ConnectionManager : SignalingClient.Listener {
     private const val PREF_NAME = "chatput_prefs"
     private const val KEY_RECENT = "recent_pairings"
     private var lastPairedRoomId: String? = null
+    private var pendingPairingPayload: String? = null
 
     fun recentPairings(context: Context): List<Pairing> {
         val sp = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE)
@@ -197,6 +202,14 @@ object ConnectionManager : SignalingClient.Listener {
         return true
     }
 
+    private fun confirmLastPairingSuccess() {
+        val ctx = appContext ?: return
+        val roomId = lastPairedRoomId ?: return
+        val payload = pendingPairingPayload ?: return
+        savePairing(ctx, payload, roomId)
+        pendingPairingPayload = null
+    }
+
     /** 连接成功后用桌面端真实设备名更新对应历史记录的显示名。 */
     private fun updatePairingLabel(roomId: String, deviceName: String) {
         val ctx = appContext ?: return
@@ -227,6 +240,8 @@ object ConnectionManager : SignalingClient.Listener {
     override fun onPeerJoined() {
         if (transportMode == TransportMode.WEBSOCKET) {
             signalingReady = true
+            connectingState = false
+            confirmLastPairingSuccess()
             setStatus("WebSocket 已连接", true)
             sendHello()
         } else {
@@ -271,6 +286,8 @@ object ConnectionManager : SignalingClient.Listener {
         if (manualDisconnectInProgress) return
         releaseTransports()
         signalingReady = false
+        connectingState = false
+        pendingPairingPayload = null
         clearSessions()
         if (removeLastPairingIfExpired(reason)) {
             setStatus("历史连接已失效，请重新扫码", false)
@@ -302,7 +319,11 @@ object ConnectionManager : SignalingClient.Listener {
             override fun onConnectionChange(newState: PeerConnection.PeerConnectionState) {
                 if (manualDisconnectInProgress) return
                 when (newState) {
-                    PeerConnection.PeerConnectionState.CONNECTED -> setStatus("P2P 已连接", true)
+                    PeerConnection.PeerConnectionState.CONNECTED -> {
+                        connectingState = false
+                        confirmLastPairingSuccess()
+                        setStatus("P2P 已连接", true)
+                    }
                     PeerConnection.PeerConnectionState.DISCONNECTED,
                     PeerConnection.PeerConnectionState.FAILED,
                     PeerConnection.PeerConnectionState.CLOSED -> handleRemoteDisconnected("桌面断开")
@@ -339,6 +360,10 @@ object ConnectionManager : SignalingClient.Listener {
             override fun onStateChange() {
                 val state = dc.state()
                 val open = state == DataChannel.State.OPEN
+                if (open) {
+                    connectingState = false
+                    confirmLastPairingSuccess()
+                }
                 setStatus(
                     if (open) "P2P 已连接" else status,
                     open
@@ -438,6 +463,8 @@ object ConnectionManager : SignalingClient.Listener {
         if (manualDisconnectInProgress || releasingTransports) return
         releaseTransports()
         signalingReady = false
+        connectingState = false
+        pendingPairingPayload = null
         connectedState = false
         clearSessions()
         setStatus(message, false)
@@ -454,6 +481,8 @@ object ConnectionManager : SignalingClient.Listener {
         dataChannel = null
         pc = null
         signaling = null
+        connectingState = false
+        pendingPairingPayload = null
 
         try {
             channel?.close()
@@ -516,6 +545,8 @@ object ConnectionManager : SignalingClient.Listener {
         manualDisconnectInProgress = true
         releaseTransports()
         signalingReady = false
+        connectingState = false
+        pendingPairingPayload = null
         connectedState = false
         transportMode = TransportMode.WEBRTC
         clearSessions()

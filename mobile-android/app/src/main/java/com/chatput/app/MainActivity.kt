@@ -48,6 +48,7 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
     private var headerCompact: Boolean? = null
     private var headerScrollOffset = 0
     private var systemBottomInset = 0
+    private var reconnectingPayload: String? = null
 
     private val scanLauncher = registerForActivityResult(ScanContract()) { result ->
         val contents = result.contents
@@ -132,22 +133,27 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
         scanLauncher.launch(options)
     }
 
-    private fun pair(qrPayload: String) {
+    private fun pair(qrPayload: String, fromRecent: Boolean = false) {
         try {
+            reconnectingPayload = if (fromRecent) qrPayload else null
             ConnectionManager.pairWith(this, qrPayload)
             Toast.makeText(this, "配对中…", Toast.LENGTH_SHORT).show()
         } catch (e: Exception) {
+            reconnectingPayload = null
             Toast.makeText(this, "二维码无效", Toast.LENGTH_SHORT).show()
         }
     }
 
     private fun refresh() {
+        if (!ConnectionManager.isConnecting) reconnectingPayload = null
         val showSessionShell = ConnectionManager.hasConnectionContext
         adapter.notifyDataSetChanged()
         binding.empty.visibility =
             if (ConnectionManager.sessions.isEmpty()) View.VISIBLE else View.GONE
         binding.empty.text = if (showSessionShell) {
             "已连接，请先在桌面选择要输入的窗口"
+        } else if (ConnectionManager.isConnecting) {
+            "正在连接桌面…"
         } else {
             "扫码连接你的桌面"
         }
@@ -174,13 +180,23 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
         recents.forEach { pairing ->
             val item = layoutInflater.inflate(R.layout.item_recent_device, container, false)
             item.findViewById<android.widget.TextView>(R.id.device_label).text = pairing.label
-            item.findViewById<ImageView>(R.id.device_delete).setOnClickListener {
+            val deleteButton = item.findViewById<ImageView>(R.id.device_delete)
+            val reconnectLabel = item.findViewById<TextView>(R.id.device_reconnect)
+            val reconnectLoading = item.findViewById<View>(R.id.device_reconnect_loading)
+            val isReconnecting = ConnectionManager.isConnecting && reconnectingPayload == pairing.payload
+
+            deleteButton.setOnClickListener {
                 ConnectionManager.removeRecentPairing(this, pairing.payload)
                 renderRecentDevices()
             }
+            deleteButton.visibility = if (isReconnecting) View.INVISIBLE else View.VISIBLE
+            deleteButton.isEnabled = !isReconnecting
+            reconnectLabel.visibility = if (isReconnecting) View.INVISIBLE else View.VISIBLE
+            reconnectLoading.visibility = if (isReconnecting) View.VISIBLE else View.GONE
             item.setOnClickListener {
-                pair(pairing.payload)
+                pair(pairing.payload, fromRecent = true)
             }
+            item.isEnabled = !isReconnecting
             container.addView(item)
         }
     }
