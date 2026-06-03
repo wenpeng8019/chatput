@@ -53,6 +53,8 @@ object ConnectionManager : SignalingClient.Listener {
         private set
     val isConnected: Boolean
         get() = connectedState
+    val hasConnectionContext: Boolean
+        get() = signaling != null || signalingReady || connectedState
 
     private var factory: PeerConnectionFactory? = null
     private var pc: PeerConnection? = null
@@ -62,6 +64,8 @@ object ConnectionManager : SignalingClient.Listener {
     private var transportMode = TransportMode.WEBRTC
     private var signalingReady = false
     private var connectedState = false
+    private var manualDisconnectInProgress = false
+    private var releasingTransports = false
 
     private val iceServers = listOf(
         PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
@@ -104,6 +108,9 @@ object ConnectionManager : SignalingClient.Listener {
      */
     fun pairWith(context: Context, qrPayload: String) {
         appContext = context.applicationContext
+        manualDisconnectInProgress = false
+
+        releaseTransports()
 
         val data = JSONObject(qrPayload)
         val url = data.getString("url")
@@ -146,6 +153,13 @@ object ConnectionManager : SignalingClient.Listener {
         } catch (e: Exception) {
             emptyList()
         }
+    }
+
+    fun removeRecentPairing(context: Context, payload: String) {
+        val roomId = runCatching { JSONObject(payload).optString("roomId") }.getOrNull()
+        if (roomId.isNullOrBlank()) return
+        appContext = context.applicationContext
+        removePairing(roomId)
     }
 
     /** 记录/置顶一条历史连接，按 roomId 去重，最多保留 3 条。 */
@@ -249,10 +263,13 @@ object ConnectionManager : SignalingClient.Listener {
     }
 
     override fun onPeerLeft() {
+        if (manualDisconnectInProgress) return
         handleRemoteDisconnected("桌面端已断开")
     }
 
     override fun onError(reason: String) {
+        if (manualDisconnectInProgress) return
+        releaseTransports()
         signalingReady = false
         clearSessions()
         if (removeLastPairingIfExpired(reason)) {
@@ -263,6 +280,7 @@ object ConnectionManager : SignalingClient.Listener {
     }
 
     override fun onClosed() {
+        if (manualDisconnectInProgress) return
         handleRemoteDisconnected("桌面断开")
     }
 
@@ -282,6 +300,7 @@ object ConnectionManager : SignalingClient.Listener {
             }
 
             override fun onConnectionChange(newState: PeerConnection.PeerConnectionState) {
+                if (manualDisconnectInProgress) return
                 when (newState) {
                     PeerConnection.PeerConnectionState.CONNECTED -> setStatus("P2P 已连接", true)
                     PeerConnection.PeerConnectionState.DISCONNECTED,
@@ -325,7 +344,7 @@ object ConnectionManager : SignalingClient.Listener {
                     open
                 )
                 if (open) sendHello()
-                if (state == DataChannel.State.CLOSING || state == DataChannel.State.CLOSED) {
+                if (!manualDisconnectInProgress && (state == DataChannel.State.CLOSING || state == DataChannel.State.CLOSED)) {
                     handleRemoteDisconnected("桌面断开")
                 }
             }
@@ -416,12 +435,40 @@ object ConnectionManager : SignalingClient.Listener {
     }
 
     private fun handleRemoteDisconnected(message: String) {
+        if (manualDisconnectInProgress || releasingTransports) return
+        releaseTransports()
         signalingReady = false
         connectedState = false
-        dataChannel = null
-        pc = null
         clearSessions()
         setStatus(message, false)
+    }
+
+    private fun releaseTransports() {
+        if (releasingTransports) return
+        releasingTransports = true
+
+        val channel = dataChannel
+        val peer = pc
+        val signalingClient = signaling
+
+        dataChannel = null
+        pc = null
+        signaling = null
+
+        try {
+            channel?.close()
+        } catch (_: Exception) {
+        }
+        try {
+            peer?.close()
+        } catch (_: Exception) {
+        }
+        try {
+            signalingClient?.close()
+        } catch (_: Exception) {
+        }
+
+        releasingTransports = false
     }
 
     private fun clearSessions() {
@@ -466,12 +513,8 @@ object ConnectionManager : SignalingClient.Listener {
     }
 
     fun disconnect() {
-        dataChannel?.close()
-        pc?.close()
-        signaling?.close()
-        dataChannel = null
-        pc = null
-        signaling = null
+        manualDisconnectInProgress = true
+        releaseTransports()
         signalingReady = false
         connectedState = false
         transportMode = TransportMode.WEBRTC

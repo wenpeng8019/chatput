@@ -5,6 +5,7 @@ import android.animation.Animator
 import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Color
@@ -39,14 +40,17 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         const val EXTRA_SESSION_ID = "session_id"
         private const val CLEAR_HOLD_DURATION_MS = 750L
         private const val HINT_DEFAULT = "按住说话"
+        private const val HINT_ENGLISH = "请说英文"
+        private const val TALK_TAP_MAX_MS = 180L
 
         // 光标拖动手势
+        private const val CURSOR_ACTIVATION_DP = 28f   // 语音按钮需明显拖出一段距离才切到光标模式
         private const val CURSOR_STEP_DP = 24f         // 水平棘轮步长：每拖动这么远移动一个字符
+        private const val CURSOR_SWIPE_TRIGGER_DP = 32f // 上下需继续划出这段距离，松手后才切一行
         private const val CURSOR_VERTICAL_BIAS = 1.8f  // 垂直需明显大于水平才锁定上下行，避免误触发换行
         private const val CURSOR_CONTINUOUS_DP = 96f   // 超过此偏移（约到按钮位置）才进入连续移动
         private const val CURSOR_REPEAT_MAX_MS = 200L  // 连续移动最慢速度
         private const val CURSOR_REPEAT_MIN_MS = 40L   // 连续移动最快速度
-        private const val CURSOR_SWIPE_REARM_DP = 14f  // 上下行：反向滑动超过此距离才允许再移一行
 
         private const val COMPOSER_LIFT_DP = 56f       // 呼出文字输入时语音框被"拉高"渐出的位移
     }
@@ -65,6 +69,7 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
     private var enterCompleted = false
 
     private var inputVisible = false   // 文字输入栏是否展开
+    private var englishModeAvailable = false
 
     // 光标拖动手势状态
     private var gestureStartX = 0f
@@ -74,8 +79,11 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
     private var cursorDelta = 0f         // 锁定轴上相对起点的偏移（px）
     private var lastStepIndex = 0        // 已经发出的离散步数（含正负）
     private var cursorRepeating = false
-    private var cursorArmed = true       // 上下行：是否可以触发下一次换行（划一下只动一行）
-    private var cursorLastDir = 0        // 上下行：上次换行方向（+1 下，-1 上）
+    private var talkDownAt = 0L
+    private var talkMode = SpeechHelper.Mode.DEFAULT
+    private var lastTalkTapUpAt = 0L
+    private var lastTalkTapX = 0f
+    private var lastTalkTapY = 0f
     private val cursorRepeatRunnable = object : Runnable {
         override fun run() {
             if (!inCursorMode) return
@@ -89,7 +97,9 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         }
     }
 
-    private val hintResetRunnable = Runnable { binding.hint.text = HINT_DEFAULT }
+    private val hintResetRunnable = Runnable {
+        binding.hint.text = currentIdleHint()
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -119,6 +129,7 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         scrollToBottom()
 
         speech = SpeechHelper(this)
+        englishModeAvailable = SpeechHelper.hasEnglishModel(this)
 
         bindVoiceButton()
         bindBackspaceButton()
@@ -140,38 +151,43 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
     }
 
     private fun bindVoiceButton() {
-        val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+        val viewConfig = android.view.ViewConfiguration.get(this)
+        val dragActivationPx = kotlin.math.max(
+            viewConfig.scaledTouchSlop * 2f,
+            CURSOR_ACTIVATION_DP.dpF
+        )
+        val tapTimeoutMs = android.view.ViewConfiguration.getDoubleTapTimeout().toLong()
+        val doubleTapSlopPx = viewConfig.scaledDoubleTapSlop.toFloat()
         binding.btnTalk.setOnTouchListener { v, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    val isDoubleTap =
+                        englishModeAvailable &&
+                        event.eventTime - lastTalkTapUpAt <= tapTimeoutMs &&
+                            kotlin.math.hypot(
+                                event.rawX - lastTalkTapX,
+                                event.rawY - lastTalkTapY
+                            ) <= doubleTapSlopPx
                     gestureStartX = event.rawX
                     gestureStartY = event.rawY
+                    talkDownAt = event.eventTime
+                    talkMode = if (isDoubleTap) SpeechHelper.Mode.ENGLISH else SpeechHelper.Mode.DEFAULT
                     inCursorMode = false
                     cursorDelta = 0f
                     lastStepIndex = 0
                     cursorRepeating = false
-                    cursorArmed = true
-                    cursorLastDir = 0
-                    startTalking(v)
+                    startTalking(v, talkMode)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     if (!inCursorMode) {
                         val dx = event.rawX - gestureStartX
                         val dy = event.rawY - gestureStartY
-                        if (kotlin.math.hypot(dx, dy) > slop) {
+                        if (kotlin.math.hypot(dx, dy) > dragActivationPx) {
                             // 按起手主方向锁定轴；垂直需明显占优才算上下行，否则默认水平移光标
                             cursorVertical =
                                 kotlin.math.abs(dy) > kotlin.math.abs(dx) * CURSOR_VERTICAL_BIAS
-                            enterCursorMode(v)
-                            if (cursorVertical) {
-                                // 上下行：起手方向立即移动一行，然后需反向再正向才会移下一行
-                                val positive = dy > 0
-                                sendAction(cursorActionFor(positive))
-                                cursorStepHaptic()
-                                cursorLastDir = if (positive) 1 else -1
-                                cursorArmed = false
-                            }
+                            enterCursorMode()
                             gestureStartX = event.rawX   // 以进入光标模式的位置为基准
                             gestureStartY = event.rawY
                         }
@@ -186,7 +202,27 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (inCursorMode) endCursorMode(v) else stopTalking(v)
+                    if (inCursorMode) {
+                        endCursorMode(v)
+                    } else {
+                        val pressDuration = event.eventTime - talkDownAt
+                        val quickTap = pressDuration <= TALK_TAP_MAX_MS
+                        if (quickTap) {
+                            cancelTalking(v)
+                            if (talkMode == SpeechHelper.Mode.DEFAULT && englishModeAvailable) {
+                                lastTalkTapUpAt = event.eventTime
+                                lastTalkTapX = event.rawX
+                                lastTalkTapY = event.rawY
+                                showTransientHint("再按一次进入英文输入")
+                            } else {
+                                lastTalkTapUpAt = 0L
+                                binding.hint.text = HINT_DEFAULT
+                            }
+                        } else {
+                            lastTalkTapUpAt = 0L
+                            stopTalking(v)
+                        }
+                    }
                     true
                 }
                 else -> false
@@ -195,13 +231,14 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
     }
 
     /** 从说话切换到光标控制：丢弃录音，进入拖动模式（不震动，交给逐字步进）。 */
-    private fun enterCursorMode(v: View) {
+    private fun enterCursorMode() {
+        mainHandler.removeCallbacks(hintResetRunnable)
         inCursorMode = true
         lastStepIndex = 0
         cursorRepeating = false
         speech.cancel()
         setOrbActive(false)
-        binding.hint.text = if (cursorVertical) "↑ 拖动移动行 ↓" else "← 拖动移动光标 →"
+        binding.hint.text = if (cursorVertical) "↑ 上滑松手切行 ↓" else "← 拖动移动光标 →"
     }
 
     /** 当前锁定轴与方向对应的动作。positive=右/下。 */
@@ -241,28 +278,14 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         }
     }
 
-    /**
-     * 上下行划动：一次划动只移动一行。触发后需反向滑动一定距离重新"上膛"，
-     * 才能再移一行——避免根据距离一次移动多行（下方也没有移动空间）。
-     */
+    /** 上下行 swipe：滑动中只预判方向，松手时最多移动一行。 */
     private fun updateCursorSwipe(delta: Float) {
-        val rearm = CURSOR_SWIPE_REARM_DP.dpF
-        if (cursorArmed) {
-            if (kotlin.math.abs(delta) >= rearm) {
-                val positive = delta > 0   // 下滑
-                sendAction(cursorActionFor(positive))
-                cursorStepHaptic()
-                cursorLastDir = if (positive) 1 else -1
-                cursorArmed = false
-                gestureStartY += delta     // 以触发点为新基准
-            }
+        cursorDelta = delta
+        val trigger = CURSOR_SWIPE_TRIGGER_DP.dpF
+        if (kotlin.math.abs(delta) >= trigger) {
+            binding.hint.text = if (delta > 0) "↓ 松手切到下一行" else "↑ 松手切到上一行"
         } else {
-            // 需向上次相反方向滑回一定距离才重新允许触发
-            val backwards = if (cursorLastDir > 0) delta < -rearm else delta > rearm
-            if (backwards) {
-                cursorArmed = true
-                gestureStartY += delta
-            }
+            binding.hint.text = "↑ 上滑松手切行 ↓"
         }
     }
 
@@ -276,11 +299,17 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
     }
 
     private fun endCursorMode(v: View) {
+        mainHandler.removeCallbacks(hintResetRunnable)
+        if (cursorVertical && kotlin.math.abs(cursorDelta) >= CURSOR_SWIPE_TRIGGER_DP.dpF) {
+            sendAction(cursorActionFor(cursorDelta > 0))
+            cursorStepHaptic()
+        }
         inCursorMode = false
         cursorRepeating = false
+        cursorDelta = 0f
         mainHandler.removeCallbacks(cursorRepeatRunnable)
         v.isPressed = false
-        binding.hint.text = HINT_DEFAULT
+        binding.hint.text = currentIdleHint()
     }
 
     /** 移动一步的触感：水平=单击，垂直（换行）=双击以示区别。 */
@@ -534,7 +563,8 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         speech.destroy()
     }
 
-    private fun startTalking(v: View) {
+    private fun startTalking(v: View, mode: SpeechHelper.Mode) {
+        mainHandler.removeCallbacks(hintResetRunnable)
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
@@ -547,7 +577,7 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         }
         v.isPressed = true
         setOrbActive(true)
-        binding.hint.text = "正在听…"
+        binding.hint.text = if (mode == SpeechHelper.Mode.ENGLISH) HINT_ENGLISH else "正在听…"
         speech.start(object : SpeechHelper.Callback {
             override fun onPartial(text: String) {
                 binding.hint.text = text
@@ -566,13 +596,21 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
                 binding.hint.text = HINT_DEFAULT
                 Toast.makeText(this@ChatActivity, message, Toast.LENGTH_SHORT).show()
             }
-        })
+        }, mode)
     }
 
     private fun stopTalking(v: View) {
+        mainHandler.removeCallbacks(hintResetRunnable)
         v.isPressed = false
         setOrbActive(false)
         speech.stop()
+    }
+
+    private fun cancelTalking(v: View) {
+        mainHandler.removeCallbacks(hintResetRunnable)
+        v.isPressed = false
+        setOrbActive(false)
+        speech.cancel()
     }
 
     private fun setOrbActive(active: Boolean) {
@@ -663,6 +701,14 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         binding.hint.text = text
         mainHandler.removeCallbacks(hintResetRunnable)
         mainHandler.postDelayed(hintResetRunnable, 1_200)
+    }
+
+    private fun currentIdleHint(): String {
+        return if (binding.btnTalk.isPressed && !inCursorMode && talkMode == SpeechHelper.Mode.ENGLISH) {
+            HINT_ENGLISH
+        } else {
+            HINT_DEFAULT
+        }
     }
 
     private fun showEnterActions(anchor: View, belowAnchor: Boolean = false) {
@@ -850,11 +896,20 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         }
     }
 
+    private fun returnToSessionList() {
+        startActivity(
+            Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            }
+        )
+        finish()
+    }
+
     // --- ConnectionManager.Observer ---
     override fun onStatus(status: String, connected: Boolean) {
         if (!connected) {
             Toast.makeText(this, "桌面已断开", Toast.LENGTH_SHORT).show()
-            finish()
+            returnToSessionList()
         }
     }
 
@@ -863,7 +918,7 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         val updated = ConnectionManager.sessionById(currentId)
         if (updated == null) {
             Toast.makeText(this, "桌面窗口已关闭", Toast.LENGTH_SHORT).show()
-            finish()
+            returnToSessionList()
         } else {
             session = updated
         }

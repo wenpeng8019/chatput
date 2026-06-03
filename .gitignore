@@ -33,5 +33,6 @@ xcuserdata/
 mobile-android/app/libs/sherpa-onnx.aar
 # sherpa-onnx 离线语音模型（~228MB，超 GitHub 100MB 限制）
 mobile-android/app/src/main/assets/sherpa-onnx-*/*.onnx
+mobile-android/app/src/english/assets/sherpa-onnx-*/*.onnx
 # WebRTC 预编译框架（M125，~26MB+）
 desktop-macos/Frameworks/WebRTC.xcframework/

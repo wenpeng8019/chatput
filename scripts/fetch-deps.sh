@@ -5,11 +5,13 @@
 # 涵盖三项二进制依赖（克隆仓库后构建前需先运行本脚本）：
 #   1. sherpa-onnx Android AAR      -> mobile-android/app/libs/sherpa-onnx.aar
 #   2. SenseVoice 离线语音模型       -> mobile-android/app/src/main/assets/<model-dir>/model.int8.onnx
-#   3. WebRTC 预编译 xcframework(M125) -> desktop-macos/Frameworks/WebRTC.xcframework
+#   3. 纯英文 Paraformer int8 模型   -> mobile-android/app/src/english/assets/<model-dir>/model.int8.onnx
+#   4. WebRTC 预编译 xcframework(M125) -> desktop-macos/Frameworks/WebRTC.xcframework
 #
 # 用法：
 #   ./scripts/fetch-deps.sh            # 下载全部缺失依赖
-#   ./scripts/fetch-deps.sh android    # 仅 Android 依赖（AAR + 模型）
+#   ./scripts/fetch-deps.sh android    # Android 标准版依赖（AAR + 默认模型）
+#   ./scripts/fetch-deps.sh android-english   # Android 英文版依赖（AAR + 默认模型 + 英文模型）
 #   ./scripts/fetch-deps.sh macos      # 仅 macOS 依赖（WebRTC）
 #   USE_MIRROR=1 ./scripts/fetch-deps.sh   # 通过 ghfast.top 代理加速（中国大陆推荐）
 #
@@ -20,6 +22,7 @@ set -euo pipefail
 # ---- 可配置版本 ----
 SHERPA_VERSION="${SHERPA_VERSION:-1.13.2}"
 MODEL_NAME="sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
+ENGLISH_MODEL_NAME="sherpa-onnx-paraformer-en-2024-03-09"
 WEBRTC_VERSION="${WEBRTC_VERSION:-125.0.0}"
 WEBRTC_TAG="M125"
 
@@ -27,6 +30,7 @@ WEBRTC_TAG="M125"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ANDROID_LIBS="$ROOT/mobile-android/app/libs"
 ANDROID_ASSETS="$ROOT/mobile-android/app/src/main/assets"
+ANDROID_ENGLISH_ASSETS="$ROOT/mobile-android/app/src/english/assets"
 MACOS_FRAMEWORKS="$ROOT/desktop-macos/Frameworks"
 
 # ---- 镜像代理 ----
@@ -94,6 +98,32 @@ fetch_model() {
   log "完成：${tokens#$ROOT/}"
 }
 
+fetch_english_model() {
+  local dest_dir="$ANDROID_ENGLISH_ASSETS/$ENGLISH_MODEL_NAME"
+  local model="$dest_dir/model.int8.onnx"
+  local tokens="$dest_dir/tokens.txt"
+  if [[ -e "$model" && "${FORCE:-0}" != "1" ]]; then
+    log "已存在，跳过：${model#$ROOT/}"
+    return 0
+  fi
+  local archive_url
+  archive_url="$(mirror "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/${ENGLISH_MODEL_NAME}.tar.bz2")"
+  local tmp_tar
+  tmp_tar="$(mktemp -t sherpa-en-model.XXXXXX.tar.bz2)"
+  log "下载纯英文语音模型压缩包..."
+  log "  <- $archive_url"
+  curl -fL --retry 3 --retry-delay 2 -o "$tmp_tar" "$archive_url"
+  mkdir -p "$dest_dir"
+  log "解包并仅提取 model.int8.onnx + tokens.txt ..."
+  tar -xjf "$tmp_tar" -C "$ANDROID_ENGLISH_ASSETS" \
+      "$ENGLISH_MODEL_NAME/model.int8.onnx" \
+      "$ENGLISH_MODEL_NAME/tokens.txt"
+  rm -f "$tmp_tar"
+  [[ -e "$model" ]] || { err "解包后未找到 $model"; exit 1; }
+  log "完成：${model#$ROOT/}"
+  log "完成：${tokens#$ROOT/}"
+}
+
 fetch_webrtc() {
   local dest="$MACOS_FRAMEWORKS/WebRTC.xcframework"
   if [[ -e "$dest" && "${FORCE:-0}" != "1" ]]; then
@@ -119,10 +149,11 @@ fetch_webrtc() {
 
 target="${1:-all}"
 case "$target" in
-  android) fetch_sherpa_aar; fetch_model ;;
+  android|android-standard) fetch_sherpa_aar; fetch_model ;;
+  android-english) fetch_sherpa_aar; fetch_model; fetch_english_model ;;
   macos)   need unzip; fetch_webrtc ;;
-  all)     fetch_sherpa_aar; fetch_model; need unzip; fetch_webrtc ;;
-  *) err "未知目标：$target（可选 all|android|macos）"; exit 1 ;;
+  all)     fetch_sherpa_aar; fetch_model; fetch_english_model; need unzip; fetch_webrtc ;;
+  *) err "未知目标：$target（可选 all|android|android-standard|android-english|macos）"; exit 1 ;;
 esac
 
 log "全部依赖就绪。"

@@ -14,11 +14,15 @@
     android:paddingBottom="@dimen/space_3">
 
     <ImageView
+        android:id="@+id/device_delete"
         android:layout_width="20dp"
         android:layout_height="20dp"
         android:layout_marginEnd="12dp"
-        android:contentDescription="@null"
-        android:src="@drawable/ic_reconnect" />
+        android:clickable="true"
+        android:contentDescription="删除历史连接"
+        android:focusable="true"
+        android:src="@drawable/ic_delete"
+        android:tint="@color/chatput_text_secondary" />
 
     <TextView
         android:id="@+id/device_label"
@@ -33,6 +37,7 @@
         android:textStyle="bold" />
 
     <TextView
+        android:id="@+id/device_reconnect"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="重新连接"

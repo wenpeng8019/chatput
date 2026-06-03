@@ -8,6 +8,7 @@ import android.media.MediaRecorder
 import android.os.Handler
 import android.os.Looper
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
+import com.k2fsa.sherpa.onnx.OfflineParaformerModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
@@ -23,6 +24,11 @@ import kotlin.concurrent.thread
  */
 class SpeechHelper(private val context: Context) {
 
+    enum class Mode {
+        DEFAULT,
+        ENGLISH
+    }
+
     interface Callback {
         fun onPartial(text: String)
         fun onResult(text: String)
@@ -30,40 +36,78 @@ class SpeechHelper(private val context: Context) {
     }
 
     companion object {
-        private const val MODEL_DIR = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
+        private const val DEFAULT_MODEL_DIR = "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
+        private const val ENGLISH_MODEL_DIR = "sherpa-onnx-paraformer-en-2024-03-09"
         private const val SAMPLE_RATE = 16000
 
-        // 识别器较重，全 App 共享一个实例
+        // 识别器较重，全 App 共享实例，按模式懒加载
         @Volatile
-        private var recognizer: OfflineRecognizer? = null
+        private var defaultRecognizer: OfflineRecognizer? = null
+        @Volatile
+        private var englishRecognizer: OfflineRecognizer? = null
         private val initExecutor = Executors.newSingleThreadExecutor()
 
-        /** 在后台预初始化识别器（首次加载模型较慢） */
+        /** 在后台预初始化默认识别器（首次加载模型较慢） */
         fun preload(context: Context) {
-            if (recognizer != null) return
+            if (defaultRecognizer != null) return
             val app = context.applicationContext
-            initExecutor.execute { ensureRecognizer(app) }
+            initExecutor.execute { ensureRecognizer(app, Mode.DEFAULT) }
+        }
+
+        fun hasEnglishModel(context: Context): Boolean {
+            if (!BuildConfig.ENABLE_ENGLISH_MODEL) return false
+            return try {
+                val assets = context.assets
+                assets.openFd("$ENGLISH_MODEL_DIR/model.int8.onnx").close()
+                assets.openFd("$ENGLISH_MODEL_DIR/tokens.txt").close()
+                true
+            } catch (_: Exception) {
+                false
+            }
         }
 
         @Synchronized
-        private fun ensureRecognizer(context: Context): OfflineRecognizer? {
-            if (recognizer != null) return recognizer
-            val config = OfflineRecognizerConfig(
-                featConfig = getFeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
-                modelConfig = OfflineModelConfig(
-                    senseVoice = OfflineSenseVoiceModelConfig(
-                        model = "$MODEL_DIR/model.int8.onnx",
-                        useInverseTextNormalization = true
-                    ),
-                    tokens = "$MODEL_DIR/tokens.txt",
-                    numThreads = 2,
-                    debug = false
+        private fun ensureRecognizer(context: Context, mode: Mode): OfflineRecognizer? {
+            if (mode == Mode.ENGLISH && !hasEnglishModel(context)) return null
+            when (mode) {
+                Mode.DEFAULT -> defaultRecognizer?.let { return it }
+                Mode.ENGLISH -> englishRecognizer?.let { return it }
+            }
+
+            val config = when (mode) {
+                Mode.DEFAULT -> OfflineRecognizerConfig(
+                    featConfig = getFeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
+                    modelConfig = OfflineModelConfig(
+                        senseVoice = OfflineSenseVoiceModelConfig(
+                            model = "$DEFAULT_MODEL_DIR/model.int8.onnx",
+                            useInverseTextNormalization = true
+                        ),
+                        tokens = "$DEFAULT_MODEL_DIR/tokens.txt",
+                        numThreads = 2,
+                        debug = false
+                    )
                 )
-            )
-            recognizer = OfflineRecognizer(
+                Mode.ENGLISH -> OfflineRecognizerConfig(
+                    featConfig = getFeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
+                    modelConfig = OfflineModelConfig(
+                        paraformer = OfflineParaformerModelConfig(
+                            model = "$ENGLISH_MODEL_DIR/model.int8.onnx"
+                        ),
+                        tokens = "$ENGLISH_MODEL_DIR/tokens.txt",
+                        numThreads = 2,
+                        debug = false
+                    )
+                )
+            }
+
+            val recognizer = OfflineRecognizer(
                 assetManager = context.assets,
                 config = config
             )
+            when (mode) {
+                Mode.DEFAULT -> defaultRecognizer = recognizer
+                Mode.ENGLISH -> englishRecognizer = recognizer
+            }
             return recognizer
         }
     }
@@ -74,15 +118,17 @@ class SpeechHelper(private val context: Context) {
     private var recording = false
     private val samples = ArrayList<Float>()
     private var callback: Callback? = null
+    private var activeMode = Mode.DEFAULT
 
     fun isAvailable(): Boolean = true
 
     @SuppressLint("MissingPermission")
-    fun start(callback: Callback) {
+    fun start(callback: Callback, mode: Mode = Mode.DEFAULT) {
         this.callback = callback
+        this.activeMode = mode
         synchronized(samples) { samples.clear() }
 
-        if (ensureRecognizer(context.applicationContext) == null) {
+        if (ensureRecognizer(context.applicationContext, mode) == null) {
             postError("识别模型尚未就绪，请稍候")
             return
         }
@@ -147,7 +193,8 @@ class SpeechHelper(private val context: Context) {
 
         thread(name = "asr-decode") {
             try {
-                val rec = recognizer ?: return@thread postError("识别器未初始化")
+                val rec = ensureRecognizer(context.applicationContext, activeMode)
+                    ?: return@thread postError("识别器未初始化")
                 val stream = rec.createStream()
                 stream.acceptWaveform(data, SAMPLE_RATE)
                 rec.decode(stream)

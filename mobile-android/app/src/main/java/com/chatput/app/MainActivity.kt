@@ -14,6 +14,7 @@ import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
 import android.view.animation.DecelerateInterpolator
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.TextView
@@ -129,16 +130,18 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
     }
 
     private fun refresh() {
+        val showSessionShell = ConnectionManager.hasConnectionContext
         adapter.notifyDataSetChanged()
         binding.empty.visibility =
             if (ConnectionManager.sessions.isEmpty()) View.VISIBLE else View.GONE
-        binding.empty.text = if (ConnectionManager.isConnected) {
-            "已连接，等待桌面端当前窗口同步…"
+        binding.empty.text = if (showSessionShell) {
+            "已连接，请先在桌面选择要输入的窗口"
         } else {
             "扫码连接你的桌面"
         }
         renderRecentDevices()
         renderStatus(ConnectionManager.status, ConnectionManager.isConnected)
+        renderHeaderMode(showSessionShell)
         binding.root.post { updateHeaderScrollOffset() }
     }
 
@@ -149,7 +152,7 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
         if (container.childCount > 1) {
             container.removeViews(1, container.childCount - 1)
         }
-        val recents = if (ConnectionManager.isConnected) emptyList()
+        val recents = if (ConnectionManager.hasConnectionContext) emptyList()
         else ConnectionManager.recentPairings(this)
         if (recents.isEmpty()) {
             container.visibility = View.GONE
@@ -159,6 +162,10 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
         recents.forEach { pairing ->
             val item = layoutInflater.inflate(R.layout.item_recent_device, container, false)
             item.findViewById<android.widget.TextView>(R.id.device_label).text = pairing.label
+            item.findViewById<ImageView>(R.id.device_delete).setOnClickListener {
+                ConnectionManager.removeRecentPairing(this, pairing.payload)
+                renderRecentDevices()
+            }
             item.setOnClickListener {
                 pair(pairing.payload)
             }
@@ -168,7 +175,7 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
 
     // --- ConnectionManager.Observer ---
     override fun onStatus(status: String, connected: Boolean) {
-        renderStatus(status, connected)
+        refresh()
     }
 
     override fun onSessionsChanged() {
@@ -179,7 +186,6 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
 
     private fun applyEdgeToEdgeInsets() {
         val headerTop = 20.dp
-        val listTop = 14.dp
         val listBottom = 110.dp
         val fabBottom = 30.dp
 
@@ -215,7 +221,8 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
     }
 
     private fun renderStatus(status: String, connected: Boolean) {
-        val shouldAnimate = headerCompact != null && headerCompact != connected
+        val showSessionShell = ConnectionManager.hasConnectionContext
+        val shouldAnimate = headerCompact != null && headerCompact != showSessionShell
         if (shouldAnimate) beginHeaderTransition()
 
         binding.status.text = status
@@ -234,7 +241,7 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
         binding.status.isClickable = connected
         binding.status.isFocusable = connected
         TextViewCompat.setCompoundDrawableTintList(binding.status, null)
-        renderHeaderMode(connected)
+        renderHeaderMode(showSessionShell)
     }
 
     private fun showConnectionMenu() {

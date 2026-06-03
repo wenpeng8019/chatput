@@ -7,6 +7,8 @@ android {
     namespace 'com.chatput.app'
     compileSdk 31
 
+    flavorDimensions 'speechModel'
+
     defaultConfig {
         applicationId 'com.chatput.app'
         minSdk 24
@@ -26,6 +28,20 @@ android {
         }
     }
 
+    productFlavors {
+        standard {
+            dimension 'speechModel'
+            buildConfigField 'boolean', 'ENABLE_ENGLISH_MODEL', 'false'
+            versionNameSuffix '-standard'
+        }
+
+        english {
+            dimension 'speechModel'
+            buildConfigField 'boolean', 'ENABLE_ENGLISH_MODEL', 'true'
+            versionNameSuffix '-english'
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
@@ -37,6 +53,7 @@ android {
 
     buildFeatures {
         viewBinding true
+        buildConfig true
     }
 
     // 模型 onnx/txt 文件不要压缩，sherpa-onnx 需要直接 mmap 读取
