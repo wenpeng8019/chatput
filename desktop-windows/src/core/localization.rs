@@ -11,8 +11,6 @@ pub enum AppLanguage {
 }
 
 impl AppLanguage {
-    pub const ALL: [AppLanguage; 3] = [AppLanguage::System, AppLanguage::Zh, AppLanguage::En];
-
     pub fn raw(self) -> &'static str {
         match self {
             AppLanguage::System => "system",
@@ -74,7 +72,7 @@ fn sys_locale_starts_with_zh() -> bool {
     if len <= 0 {
         return false;
     }
-    let name = String::from_utf16_lossy(&buf[..(len as usize - 1).max(0)]);
+    let name = String::from_utf16_lossy(&buf[..(len as usize - 1)]);
     name.to_lowercase().starts_with("zh")
 }
 

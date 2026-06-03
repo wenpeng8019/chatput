@@ -6,6 +6,7 @@ use serde_json::Value;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -16,10 +17,16 @@ pub enum SignalingEvent {
     Close,
 }
 
+struct ConnectionTasks {
+    send: JoinHandle<()>,
+    recv: JoinHandle<()>,
+}
+
 /// 异步 WebSocket 客户端。`connect` 后通过 event channel 输出事件，
 /// 通过 `send` 发送 JSON。
 pub struct SignalingClient {
     out_tx: Arc<Mutex<Option<mpsc::UnboundedSender<Message>>>>,
+    tasks: Arc<Mutex<Option<ConnectionTasks>>>,
     generation: Arc<std::sync::atomic::AtomicU64>,
     events: mpsc::UnboundedSender<SignalingEvent>,
 }
@@ -28,6 +35,7 @@ impl SignalingClient {
     pub fn new(events: mpsc::UnboundedSender<SignalingEvent>) -> Self {
         SignalingClient {
             out_tx: Arc::new(Mutex::new(None)),
+            tasks: Arc::new(Mutex::new(None)),
             generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             events,
         }
@@ -38,11 +46,8 @@ impl SignalingClient {
         if url.is_empty() {
             return;
         }
-        // 递增代号，旧任务发现代号变化即退出。
-        let gen = self
-            .generation
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-            + 1;
+        // 先终止旧连接，再为新连接分配一个新的代号。
+        let gen = self.reset_connection().await;
 
         let (ws_stream, _) = match connect_async(&url).await {
             Ok(s) => s,
@@ -61,7 +66,7 @@ impl SignalingClient {
         // 发送任务。
         let gen_check = self.generation.clone();
         let gen_send = gen;
-        tokio::spawn(async move {
+        let send = tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
                 if gen_check.load(std::sync::atomic::Ordering::SeqCst) != gen_send {
                     break;
@@ -75,7 +80,7 @@ impl SignalingClient {
         // 接收任务。
         let events = self.events.clone();
         let gen_check2 = self.generation.clone();
-        tokio::spawn(async move {
+        let recv = tokio::spawn(async move {
             while let Some(item) = read.next().await {
                 if gen_check2.load(std::sync::atomic::Ordering::SeqCst) != gen {
                     return;
@@ -99,6 +104,8 @@ impl SignalingClient {
                 let _ = events.send(SignalingEvent::Close);
             }
         });
+
+        *self.tasks.lock().await = Some(ConnectionTasks { send, recv });
     }
 
     /// 发送一个 JSON 对象。
@@ -110,8 +117,22 @@ impl SignalingClient {
 
     /// 关闭当前连接。
     pub async fn close(&self) {
-        self.generation
-            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.reset_connection().await;
+    }
+
+    async fn reset_connection(&self) -> u64 {
+        let gen = self
+            .generation
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+
         *self.out_tx.lock().await = None;
+
+        if let Some(tasks) = self.tasks.lock().await.take() {
+            tasks.send.abort();
+            tasks.recv.abort();
+        }
+
+        gen
     }
 }

@@ -82,10 +82,7 @@ fn render_icon_dib(size: u32) -> Vec<u8> {
     fill_round_rect(
         &mut high,
         hi,
-        map(0.0),
-        map(0.0),
-        map(1024.0),
-        map(1024.0),
+        RectF::new(map(0.0), map(0.0), map(1024.0), map(1024.0)),
         map(229.0),
         Rgba::rgb(255, 255, 255),
     );
@@ -94,10 +91,7 @@ fn render_icon_dib(size: u32) -> Vec<u8> {
     fill_round_rect(
         &mut high,
         hi,
-        map(26.0),
-        map(26.0),
-        map(998.0),
-        map(998.0),
+        RectF::new(map(26.0), map(26.0), map(998.0), map(998.0)),
         map(205.0),
         Rgba::rgb(244, 247, 251),
     );
@@ -109,7 +103,7 @@ fn render_icon_dib(size: u32) -> Vec<u8> {
     let mx = |v: f32| map(1024.0 - v);
 
     // 后层气泡。
-    fill_round_rect(&mut high, hi, mx(575.0), map(417.0), mx(163.0), map(753.0), map(100.0), blue);
+    fill_round_rect(&mut high, hi, RectF::new(mx(575.0), map(417.0), mx(163.0), map(753.0)), map(100.0), blue);
     fill_polygon(
         &mut high,
         hi,
@@ -118,8 +112,8 @@ fn render_icon_dib(size: u32) -> Vec<u8> {
     );
 
     // 前层键盘护城河 + 蓝面板。
-    fill_round_rect(&mut high, hi, mx(861.0) - map(40.0), map(195.0) - map(40.0), mx(381.0) + map(40.0), map(495.0) + map(40.0), map(80.0), bg);
-    fill_round_rect(&mut high, hi, mx(861.0), map(195.0), mx(381.0), map(495.0), map(60.0), blue);
+    fill_round_rect(&mut high, hi, RectF::new(mx(861.0) - map(40.0), map(195.0) - map(40.0), mx(381.0) + map(40.0), map(495.0) + map(40.0)), map(80.0), bg);
+    fill_round_rect(&mut high, hi, RectF::new(mx(861.0), map(195.0), mx(381.0), map(495.0)), map(60.0), blue);
 
     // 白键。
     let white = Rgba::rgb(255, 255, 255);
@@ -131,10 +125,7 @@ fn render_icon_dib(size: u32) -> Vec<u8> {
     fill_round_rect(
         &mut high,
         hi,
-        mx(381.0 + 350.0),
-        map(195.0 + 216.0),
-        mx(381.0 + 130.0),
-        map(195.0 + 252.0),
+        RectF::new(mx(381.0 + 350.0), map(195.0 + 216.0), mx(381.0 + 130.0), map(195.0 + 252.0)),
         map(18.0),
         white,
     );
@@ -143,7 +134,7 @@ fn render_icon_dib(size: u32) -> Vec<u8> {
 
     // ICO 内嵌 BMP：BITMAPINFOHEADER + BGRA bottom-up + 1bpp AND mask。
     // 32 位图标由 alpha 通道负责透明；AND mask 保持全 0，避免 1-bit mask 在圆角边缘产生灰色锯齿。
-    let mask_stride = (((size + 31) / 32) * 4) as usize;
+    let mask_stride = (size.div_ceil(32) * 4) as usize;
     let mut dib = Vec::with_capacity(40 + (size * size * 4) as usize + mask_stride * size as usize);
     dib.extend_from_slice(&40u32.to_le_bytes());
     dib.extend_from_slice(&(size as i32).to_le_bytes());
@@ -165,13 +156,13 @@ fn render_icon_dib(size: u32) -> Vec<u8> {
         }
     }
 
-    dib.extend(std::iter::repeat(0).take(mask_stride * size as usize));
+    dib.extend(std::iter::repeat_n(0, mask_stride * size as usize));
     dib
 }
 
 fn downsample(src: &[Rgba], src_size: u32, dst_size: u32, scale: u32) -> Vec<Rgba> {
     let mut out = Vec::with_capacity((dst_size * dst_size) as usize);
-    let denom = (scale * scale) as u32;
+    let denom = scale * scale;
     for y in 0..dst_size {
         for x in 0..dst_size {
             let mut r = 0u32;
@@ -191,9 +182,9 @@ fn downsample(src: &[Rgba], src_size: u32, dst_size: u32, scale: u32) -> Vec<Rgb
             let alpha = a / denom;
             out.push(Rgba {
                 // 透明样本不参与 RGB 平均，避免圆角边缘把透明黑混进去形成深灰边。
-                r: if a == 0 { 0 } else { (r / a) as u8 },
-                g: if a == 0 { 0 } else { (g / a) as u8 },
-                b: if a == 0 { 0 } else { (b / a) as u8 },
+                r: r.checked_div(a).unwrap_or(0) as u8,
+                g: g.checked_div(a).unwrap_or(0) as u8,
+                b: b.checked_div(a).unwrap_or(0) as u8,
                 a: alpha as u8,
             });
         }
@@ -201,7 +192,27 @@ fn downsample(src: &[Rgba], src_size: u32, dst_size: u32, scale: u32) -> Vec<Rgb
     out
 }
 
-fn fill_round_rect(buf: &mut [Rgba], size: u32, mut x0: f32, y0: f32, mut x1: f32, y1: f32, radius: f32, color: Rgba) {
+#[derive(Clone, Copy)]
+struct RectF {
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+}
+
+impl RectF {
+    const fn new(x0: f32, y0: f32, x1: f32, y1: f32) -> Self {
+        Self { x0, y0, x1, y1 }
+    }
+}
+
+fn fill_round_rect(buf: &mut [Rgba], size: u32, rect: RectF, radius: f32, color: Rgba) {
+    let RectF {
+        mut x0,
+        y0,
+        mut x1,
+        y1,
+    } = rect;
     if x0 > x1 {
         std::mem::swap(&mut x0, &mut x1);
     }

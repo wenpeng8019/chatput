@@ -35,8 +35,6 @@ pub enum TransportMode {
 }
 
 impl TransportMode {
-    pub const ALL: [TransportMode; 2] = [TransportMode::Webrtc, TransportMode::Websocket];
-
     pub fn raw(self) -> &'static str {
         match self {
             TransportMode::Webrtc => "webrtc",
@@ -166,15 +164,6 @@ impl AppSettings {
             return trimmed.to_string();
         }
         network_info::primary_lan_ipv4().unwrap_or_else(|| "127.0.0.1".to_string())
-    }
-
-    /// 内置模式下当前可对外广播的主机地址；拿不到局域网地址时返回 None。
-    pub fn resolved_advertised_host(&self) -> Option<String> {
-        let trimmed = self.ip_override.trim();
-        if !trimmed.is_empty() {
-            return Some(trimmed.to_string());
-        }
-        network_info::primary_lan_ipv4()
     }
 
     /// 桌面端（host）本地用于连接信令的 URL。

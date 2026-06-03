@@ -17,7 +17,6 @@ pub struct AppStateInner {
     pub qr: Option<Arc<QrImage>>,
     /// 二维码版本号，UI 据此决定是否重建纹理。
     pub qr_version: u64,
-    pub accessibility_granted: bool,
     pub sessions: VecDeque<FocusSession>,
     pub log_lines: VecDeque<String>,
     pub server_running: bool,
@@ -36,7 +35,6 @@ impl Default for AppStateInner {
             room_code: String::new(),
             qr: None,
             qr_version: 0,
-            accessibility_granted: true, // Windows 无独立辅助功能授权；默认可用。
             sessions: VecDeque::new(),
             log_lines: VecDeque::new(),
             server_running: false,
@@ -112,10 +110,6 @@ impl AppState {
         });
     }
 
-    pub fn set_accessibility(&self, granted: bool) {
-        self.write(|s| s.accessibility_granted = granted);
-    }
-
     pub fn log(&self, line: String) {
         self.write(|s| {
             s.log_lines.push_back(line);
@@ -131,11 +125,12 @@ impl AppState {
 
     pub fn upsert_session(&self, session: FocusSession) {
         self.write(|s| {
-            if !s.sessions.iter().any(|x| x.id == session.id) {
-                s.sessions.push_front(session);
-                while s.sessions.len() > config::limit::SESSIONS {
-                    s.sessions.pop_back();
-                }
+            if let Some(index) = s.sessions.iter().position(|x| x.id == session.id) {
+                s.sessions.remove(index);
+            }
+            s.sessions.push_front(session);
+            while s.sessions.len() > config::limit::SESSIONS {
+                s.sessions.pop_back();
             }
         });
     }

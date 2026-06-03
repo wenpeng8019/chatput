@@ -204,20 +204,28 @@ impl Coordinator {
             t0 if t0 == wire::signal::ROOM_CREATED => {
                 self.room_id = msg.get("roomId").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 self.token = msg.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let advertised_url = self.settings.advertised_url();
+                self.state.log(format!("{}: {}", t("二维码地址", "QR URL"), advertised_url));
+                if advertised_url.contains("127.0.0.1") {
+                    self.state.log(t(
+                        "未检测到可用局域网 IP，请在设置 > 内置服务里手动填写电脑的 Wi-Fi/以太网 IPv4。",
+                        "No usable LAN IP detected. Set the PC Wi-Fi/Ethernet IPv4 manually in Settings > Built-in.",
+                    ));
+                }
 
                 let transport_raw = match self.transport {
                     TransportMode::Webrtc => wire::transport::WEBRTC,
                     TransportMode::Websocket => wire::transport::WEBSOCKET,
                 };
                 let payload = json!({
-                    "url": self.settings.advertised_url(),
+                    "url": advertised_url,
                     "roomId": self.room_id,
                     "token": self.token,
                     wire::key::TRANSPORT: transport_raw,
                 });
                 let qr = qrcode_gen::generate(&payload.to_string(), 6, 2);
                 self.state
-                    .set_room(self.room_id.clone(), self.settings.advertised_url(), qr);
+                    .set_room(self.room_id.clone(), advertised_url, qr);
                 self.state
                     .set_status("等待手机扫码…", "Waiting for phone…", false);
             }
@@ -260,8 +268,8 @@ impl Coordinator {
                 self.state.set_connected_device("");
                 self.webrtc.close().await;
                 self.peer_present = false;
-                // 重新开房等待再次连接。
-                self.bring_up().await;
+                self.state
+                    .set_status("手机已断开，等待重连…", "Phone disconnected, waiting to reconnect…", false);
             }
 
             t0 if t0 == wire::signal::ERROR => {

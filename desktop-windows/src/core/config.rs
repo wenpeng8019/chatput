@@ -7,14 +7,6 @@ use std::time::Duration;
 pub mod timing {
     use super::Duration;
 
-    /// 可注入状态轮询间隔。
-    pub const ACCESSIBILITY_POLL: Duration = Duration::from_millis(1500);
-    /// 信令断开后自动重连延迟。
-    pub const RECONNECT_DELAY: Duration = Duration::from_millis(3000);
-    /// 配置变更后重启链路前的缓冲延迟。
-    pub const RESTART_DEBOUNCE: Duration = Duration::from_millis(300);
-    /// 网络环境变化后的缓冲延迟，避免接口抖动时频繁重启。
-    pub const NETWORK_CHANGE_DEBOUNCE: Duration = Duration::from_millis(1000);
     /// 已上报窗口是否仍存在的检测间隔。
     pub const WINDOW_EXISTENCE_POLL: Duration = Duration::from_millis(1000);
     /// 粘贴完成后还原剪贴板的延迟。

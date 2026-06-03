@@ -19,10 +19,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::Win32::System::Threading::GetCurrentProcessId;
 
+const SESSION_CLOSE_MISS_THRESHOLD: u8 = 3;
+
 /// 桌面端单一会话（= 一个被聚焦的输入窗口）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct FocusSession {
-    /// sessionId，与手机端一致：app|title。
+    /// sessionId：Windows 侧使用稳定的窗口句柄，避免标题变化时被误判为新窗口。
     pub id: String,
     pub app: String,
     pub title: String,
@@ -42,19 +44,24 @@ pub struct FocusMonitor {
     hook_thread_id: Arc<Mutex<u32>>,
     resend_flag: Arc<Mutex<bool>>,
     running: Arc<Mutex<bool>>,
-    known: Arc<Mutex<HashMap<String, String>>>, // sessionId -> appName
+    known: Arc<Mutex<HashMap<String, KnownSession>>>,
+}
+
+#[derive(Clone)]
+struct KnownSession {
+    missed_polls: u8,
 }
 
 // 线程内共享给 WinEvent 回调的状态（通过 thread_local，因回调是 extern "system" 无 self）。
 thread_local! {
-    static CB_STATE: std::cell::RefCell<Option<CallbackState>> = std::cell::RefCell::new(None);
+    static CB_STATE: std::cell::RefCell<Option<CallbackState>> = const { std::cell::RefCell::new(None) };
 }
 
 struct CallbackState {
     tx: Sender<FocusEvent>,
     last_key: String,
     own_pid: u32,
-    known: Arc<Mutex<HashMap<String, String>>>,
+    known: Arc<Mutex<HashMap<String, KnownSession>>>,
     resend_flag: Arc<Mutex<bool>>,
 }
 
@@ -161,13 +168,12 @@ impl FocusMonitor {
         let known_poll = known;
         let running_poll = self.running.clone();
         thread::spawn(move || {
-            let own_pid = unsafe { GetCurrentProcessId() };
             loop {
                 thread::sleep(config::timing::WINDOW_EXISTENCE_POLL);
                 if !*running_poll.lock().unwrap() {
                     break;
                 }
-                remove_closed_sessions(&known_poll, own_pid, &tx_poll);
+                remove_closed_sessions(&known_poll, &tx_poll);
             }
         });
     }
@@ -239,7 +245,8 @@ fn emit_current() {
             return;
         }
 
-        let key = format!("{}|{}", app, title);
+        let session_id = session_id(hwnd);
+        let key = format!("{}|{}|{}", session_id, app, title);
 
         // 处理补发请求：重置去重键。
         let force = {
@@ -258,67 +265,72 @@ fn emit_current() {
 
         let ts = now_millis();
         let session = FocusSession {
-            id: key.clone(),
+            id: session_id.clone(),
             app: app.clone(),
             title,
             ts,
         };
-        st.known.lock().unwrap().insert(key, app);
+        st.known.lock().unwrap().insert(
+            session_id,
+            KnownSession {
+                missed_polls: 0,
+            },
+        );
         let _ = st.tx.send(FocusEvent::Session(session));
     });
 }
 
 /// 轮询：移除已不存在的已上报窗口会话。
 fn remove_closed_sessions(
-    known: &Arc<Mutex<HashMap<String, String>>>,
-    own_pid: u32,
+    known: &Arc<Mutex<HashMap<String, KnownSession>>>,
     tx: &Sender<FocusEvent>,
 ) {
-    let snapshot: Vec<(String, String)> = {
+    let snapshot: Vec<String> = {
         let g = known.lock().unwrap();
         if g.is_empty() {
             return;
         }
-        g.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+        g.keys().cloned().collect()
     };
 
     // 枚举所有可见窗口，构造存活会话集合。
-    let live = enumerate_live_sessions(own_pid);
+    let live = enumerate_live_sessions();
 
     let mut closed: Vec<String> = Vec::new();
-    for (session_id, _app) in snapshot {
-        if !live.contains(&session_id) {
-            closed.push(session_id);
+    {
+        let mut g = known.lock().unwrap();
+        for session_id in snapshot {
+            if let Some(entry) = g.get_mut(&session_id) {
+                if live.contains(&session_id) {
+                    entry.missed_polls = 0;
+                } else {
+                    entry.missed_polls = entry.missed_polls.saturating_add(1);
+                    if entry.missed_polls >= SESSION_CLOSE_MISS_THRESHOLD {
+                        closed.push(session_id);
+                    }
+                }
+            }
+        }
+        for id in &closed {
+            g.remove(id);
         }
     }
 
     if !closed.is_empty() {
-        let mut g = known.lock().unwrap();
-        for id in &closed {
-            g.remove(id);
-        }
-        drop(g);
         for id in closed {
             let _ = tx.send(FocusEvent::SessionClosed(id));
         }
     }
 }
 
-/// 枚举所有可见顶层窗口，返回 "app|title" 集合。
-fn enumerate_live_sessions(own_pid: u32) -> std::collections::HashSet<String> {
+fn enumerate_live_sessions() -> std::collections::HashSet<String> {
     use std::collections::HashSet;
-    let mut set: Box<HashSet<String>> = Box::new(HashSet::new());
+    let mut set: Box<HashSet<String>> = Box::default();
     let ptr = &mut *set as *mut HashSet<String> as isize;
     unsafe {
         let _ = EnumWindows(Some(enum_proc), LPARAM(ptr));
     }
-    // own_pid 过滤在回调里做，这里直接返回。
-    let _ = own_pid;
     *set
-}
-
-thread_local! {
-    static ENUM_OWN_PID: std::cell::Cell<u32> = std::cell::Cell::new(0);
 }
 
 unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -336,11 +348,13 @@ unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
     if title.is_empty() {
         return true.into();
     }
-    let app = process_name(pid).unwrap_or_else(|| "Unknown".to_string());
-    let key = format!("{}|{}", app, title);
     let set = &mut *(lparam.0 as *mut HashSet<String>);
-    set.insert(key);
+    set.insert(session_id(hwnd));
     true.into()
+}
+
+fn session_id(hwnd: HWND) -> String {
+    format!("win:{:x}", hwnd.0 as usize)
 }
 
 fn window_title(hwnd: HWND) -> String {

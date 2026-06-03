@@ -358,12 +358,19 @@ internal class DesktopConnection(
                 )
             )
         } else {
+            val idx = sessions.indexOf(existing)
+            val updated = existing.copy(
+                app = msg.optString("app"),
+                title = msg.optString("title"),
+                device = if (device.isNotBlank()) device else existing.device,
+                isActive = true
+            )
+            updated.messages.addAll(existing.messages)
             if (device.isNotBlank()) existing.device = device
-            existing.isActive = true
-            if (sessions.indexOf(existing) != 0) {
-                sessions.remove(existing)
-                sessions.add(0, existing)
+            if (idx >= 0) {
+                sessions.removeAt(idx)
             }
+            sessions.add(0, updated)
         }
         notifySessions()
     }

@@ -1,6 +1,7 @@
 //! 原生 Win32 + GDI 界面。两类窗口：
 //! 1) 主面板 popup —— 无边框，弹在托盘上方（桌面右下），点击窗口外即消失，对齐 macOS NSPopover。
 //! 2) 设置窗口 —— 标准带标题栏窗口，使用原生 Tab 控件（通用 / 内置 / 外部 / 日志）。
+//!
 //! 后台逻辑仍由 Coordinator 驱动。
 
 use crate::app::app_state::AppState;
@@ -82,6 +83,7 @@ const BM_SETCHECK: u32 = 0x00F1;
 const CBN_SELCHANGE: u16 = 1;
 const BN_CLICKED: u16 = 0;
 const EN_CHANGE: u16 = 0x0300;
+const WM_CTLCOLOREDIT: u32 = 0x0133;
 const WM_CTLCOLORSTATIC: u32 = 0x0138;
 const WM_CTLCOLORBTN: u32 = 0x0135;
 const WM_SETICON: u32 = 0x0080;
@@ -97,12 +99,11 @@ const EM_SETCUEBANNER: u32 = 0x1501;
 const TCM_FIRST: u32 = 0x1300;
 const TCM_INSERTITEMW: u32 = TCM_FIRST + 62;
 const TCM_GETCURSEL: u32 = TCM_FIRST + 11;
-const TCM_SETCURSEL: u32 = TCM_FIRST + 12;
 const TCN_SELCHANGE: u32 = (0u32).wrapping_sub(551); // TCN_FIRST(-550) - 1
 const TCIF_TEXT: u32 = 0x0001;
 
 #[repr(C)]
-struct TCITEMW {
+struct TcItemW {
     mask: u32,
     dw_state: u32,
     dw_state_mask: u32,
@@ -113,7 +114,7 @@ struct TCITEMW {
 }
 
 #[repr(C)]
-struct NMHDR {
+struct NmHdr {
     hwnd_from: HWND,
     id_from: usize,
     code: u32,
@@ -1097,7 +1098,19 @@ unsafe extern "system" fn settings_wndproc(
             }
             LRESULT(0)
         }
-        WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => {
+        WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => {
+            if msg == WM_CTLCOLOREDIT {
+                let hdc = HDC(wparam.0 as *mut c_void);
+                let ctl = HWND(lparam.0 as *mut c_void);
+                if let Some(st) = state_ptr(hwnd) {
+                    if ctl == st.ed_log {
+                        SetTextColor(hdc, COLORREF(0x00000000));
+                        SetBkColor(hdc, COLORREF(0x00FFFFFF));
+                        let brush = GetSysColorBrush(COLOR_WINDOW);
+                        return LRESULT(brush.0 as isize);
+                    }
+                }
+            }
             // 用 Tab 页主题底色填充标签/按钮背景，使其与 Tab 页面一致（非纯白）。
             let hdc = HDC(wparam.0 as *mut c_void);
             let ctl = HWND(lparam.0 as *mut c_void);
@@ -1120,7 +1133,7 @@ unsafe extern "system" fn settings_wndproc(
             LRESULT(brush.0 as isize)
         }
         WM_NOTIFY => {
-            let nm = lparam.0 as *const NMHDR;
+            let nm = lparam.0 as *const NmHdr;
             if !nm.is_null() && (*nm).code == TCN_SELCHANGE {
                 if let Some(st) = state_ptr(hwnd) {
                     let idx = SendMessageW(st.tab, TCM_GETCURSEL, WPARAM(0), LPARAM(0)).0 as i32;
@@ -1539,6 +1552,7 @@ unsafe fn section_header(st: &mut UiState, tab: i32, parent: HWND, x: i32, w: i3
     add_label_h(st, tab, parent, x, 78, w, 36, subtitle, st.font_small);
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn add_combo(st: &mut UiState, tab: i32, parent: HWND, x: i32, y: i32, w: i32, id: usize, font: HFONT) -> HWND {
     add_ctrl(
         st, tab, parent, w!("COMBOBOX"), "",
@@ -1547,6 +1561,7 @@ unsafe fn add_combo(st: &mut UiState, tab: i32, parent: HWND, x: i32, y: i32, w:
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn add_edit(st: &mut UiState, tab: i32, parent: HWND, x: i32, y: i32, w: i32, id: usize, font: HFONT) -> HWND {
     add_ctrl(
         st, tab, parent, w!("EDIT"), "",
@@ -1563,7 +1578,7 @@ unsafe fn set_cue(edit: HWND, text: &str) {
 
 unsafe fn tab_insert(tab: HWND, idx: usize, text: &str) {
     let mut wide = to_wide(text);
-    let mut item = TCITEMW {
+    let mut item = TcItemW {
         mask: TCIF_TEXT,
         dw_state: 0,
         dw_state_mask: 0,
@@ -1576,7 +1591,7 @@ unsafe fn tab_insert(tab: HWND, idx: usize, text: &str) {
         tab,
         TCM_INSERTITEMW,
         WPARAM(idx),
-        LPARAM(&mut item as *mut TCITEMW as isize),
+        LPARAM(&mut item as *mut TcItemW as isize),
     );
 }
 
