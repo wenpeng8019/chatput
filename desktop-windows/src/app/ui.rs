@@ -15,20 +15,25 @@ use std::ptr::null_mut;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc::UnboundedSender;
 
-use windows::core::{w, PCWSTR};
+use windows::core::{w, PCSTR, PCWSTR};
 use windows::Win32::Foundation::{
-    COLORREF, ERROR_ALREADY_EXISTS, FALSE, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, TRUE,
-    WPARAM,
+    BOOL, COLORREF, ERROR_ALREADY_EXISTS, FALSE, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, POINT,
+    RECT, TRUE, WPARAM,
 };
 use windows::Win32::Graphics::Gdi::*;
-use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::Graphics::Dwm::{
+    DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_TEXT_COLOR,
+    DWMWA_USE_IMMERSIVE_DARK_MODE,
+};
+use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::System::Registry::{
     RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD,
 };
 use windows::Win32::System::Threading::CreateMutexW;
+use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::Controls::{
-    CloseThemeData, DrawThemeBackground, InitCommonControlsEx, OpenThemeData, HTHEME,
-    ICC_TAB_CLASSES, INITCOMMONCONTROLSEX,
+    CloseThemeData, DrawThemeBackground, InitCommonControlsEx, OpenThemeData, SetWindowTheme,
+    HTHEME, ICC_TAB_CLASSES, INITCOMMONCONTROLSEX,
 };
 use windows::Win32::UI::Shell::{
     Shell_NotifyIconW, NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NOTIFYICONDATAW,
@@ -43,6 +48,8 @@ const WM_TRAY: u32 = WM_APP + 1;
 const WM_REBUILD_SETTINGS: u32 = WM_APP + 2;
 const TIMER_REPAINT: usize = 1;
 const TIMER_LOG: usize = 2;
+/// 主题切换后延迟重建托盘图标（等任务栏 SystemUsesLightTheme 注册表项落地）。
+const TIMER_TRAY_REFRESH: usize = 3;
 
 const POPUP_W: i32 = 300;
 const POPUP_H: i32 = 420;
@@ -99,6 +106,15 @@ const EM_SETCUEBANNER: u32 = 0x1501;
 const TCM_FIRST: u32 = 0x1300;
 const TCM_INSERTITEMW: u32 = TCM_FIRST + 62;
 const TCM_GETCURSEL: u32 = TCM_FIRST + 11;
+const TCM_GETITEMCOUNT: u32 = TCM_FIRST + 4;
+const TCM_GETITEMRECT: u32 = TCM_FIRST + 10;
+const TCM_GETITEMW: u32 = TCM_FIRST + 60;
+
+// 编辑控件消息（windows crate 未在 glob 中导出，按 Win32 文档常量手动声明）。
+const EM_GETRECT: u32 = 0x00B2;
+const EM_LINESCROLL: u32 = 0x00B6;
+const EM_GETLINECOUNT: u32 = 0x00BA;
+const EM_GETFIRSTVISIBLELINE: u32 = 0x00CE;
 const TCN_SELCHANGE: u32 = (0u32).wrapping_sub(551); // TCN_FIRST(-550) - 1
 const TCIF_TEXT: u32 = 0x0001;
 
@@ -138,6 +154,167 @@ enum IconKind {
     Power,
 }
 
+// ---- 主题（明亮 / 暗夜，随系统 AppsUseLightTheme 切换）----
+
+/// 强调色（橙色 #0A95FF→实为 #FF950A？此处沿用既有 accent）。COLORREF 为 BGR。
+const ACCENT: COLORREF = COLORREF(0x00FF950A);
+const ACCENT_TEXT: COLORREF = COLORREF(0x00FFFFFF);
+const STATE_CONNECTED: COLORREF = COLORREF(0x0034C759); // 绿
+const STATE_ACTIVE: COLORREF = COLORREF(0x00FF950A); // 橙
+const STATE_IDLE_LIGHT: COLORREF = COLORREF(0x008E8E8E);
+const STATE_IDLE_DARK: COLORREF = COLORREF(0x00808080);
+
+/// 一套界面配色。COLORREF 中性灰对称，无需关心 BGR 顺序。
+#[derive(Clone, Copy)]
+struct Theme {
+    dark: bool,
+    popup_bg: COLORREF,    // popup 背景
+    surface: COLORREF,     // 卡片 / 次级按钮底
+    line: COLORREF,        // 分隔线
+    border: COLORREF,      // 控件描边
+    text_primary: COLORREF,
+    text_secondary: COLORREF,
+    text_tertiary: COLORREF,
+    button_text: COLORREF, // 次级按钮文字
+    control_bg: COLORREF,  // 编辑框 / 日志底
+    control_text: COLORREF,
+    idle_dot: COLORREF,    // 空闲状态圆点
+    badge_idle: COLORREF,  // 模式徽标未启用圆点
+}
+
+const LIGHT_THEME: Theme = Theme {
+    dark: false,
+    popup_bg: COLORREF(0x00F7F7F7),
+    surface: COLORREF(0x00FFFFFF),
+    line: COLORREF(0x00E2E2E2),
+    border: COLORREF(0x00C8C8C8),
+    text_primary: COLORREF(0x00202020),
+    text_secondary: COLORREF(0x00707070),
+    text_tertiary: COLORREF(0x00A0A0A0),
+    button_text: COLORREF(0x00303030),
+    control_bg: COLORREF(0x00FFFFFF),
+    control_text: COLORREF(0x00000000),
+    idle_dot: STATE_IDLE_LIGHT,
+    badge_idle: COLORREF(0x00B0B0B0),
+};
+
+const DARK_THEME: Theme = Theme {
+    dark: true,
+    popup_bg: COLORREF(0x001E1E1E),
+    surface: COLORREF(0x002B2B2B),
+    line: COLORREF(0x003A3A3A),
+    border: COLORREF(0x004A4A4A),
+    text_primary: COLORREF(0x00F2F2F2),
+    text_secondary: COLORREF(0x00B0B0B0),
+    text_tertiary: COLORREF(0x00808080),
+    button_text: COLORREF(0x00E6E6E6),
+    control_bg: COLORREF(0x00262626),
+    control_text: COLORREF(0x00F2F2F2),
+    idle_dot: STATE_IDLE_DARK,
+    badge_idle: COLORREF(0x00666666),
+};
+
+/// 应用是否使用浅色主题（Win10/11 个性化设置）。失败默认浅色。
+unsafe fn apps_use_light_theme() -> bool {
+    let mut val: u32 = 1;
+    let mut sz = std::mem::size_of::<u32>() as u32;
+    let r = RegGetValueW(
+        HKEY_CURRENT_USER,
+        w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+        w!("AppsUseLightTheme"),
+        RRF_RT_REG_DWORD,
+        None,
+        Some(&mut val as *mut u32 as *mut c_void),
+        Some(&mut sz),
+    );
+    if r.is_ok() {
+        val != 0
+    } else {
+        true
+    }
+}
+
+/// 当前应使用的配色。
+unsafe fn current_theme() -> Theme {
+    if apps_use_light_theme() {
+        LIGHT_THEME
+    } else {
+        DARK_THEME
+    }
+}
+
+// uxtheme 私有序号 API：让原生控件（复选框/下拉/滚动条等）跟随暗色。
+type FnSetPreferredAppMode = unsafe extern "system" fn(i32) -> i32;
+type FnAllowDarkModeForWindow = unsafe extern "system" fn(HWND, BOOL) -> BOOL;
+type FnFlushMenuThemes = unsafe extern "system" fn();
+
+/// 进程级偏好：0=Default 1=AllowDark 2=ForceDark 3=ForceLight。仅在 Win10 1809+ 可用。
+unsafe fn set_preferred_app_mode(dark: bool) {
+    let Ok(lib) = LoadLibraryW(w!("uxtheme.dll")) else {
+        return;
+    };
+    if let Some(p) = GetProcAddress(lib, PCSTR(135usize as *const u8)) {
+        let f: FnSetPreferredAppMode = std::mem::transmute(p);
+        f(if dark { 1 } else { 0 });
+    }
+    if let Some(p) = GetProcAddress(lib, PCSTR(136usize as *const u8)) {
+        let flush: FnFlushMenuThemes = std::mem::transmute(p);
+        flush();
+    }
+}
+
+/// 允许某窗口启用暗色（私有序号 133）。
+unsafe fn allow_dark_for_window(hwnd: HWND, allow: bool) {
+    let Ok(lib) = LoadLibraryW(w!("uxtheme.dll")) else {
+        return;
+    };
+    if let Some(p) = GetProcAddress(lib, PCSTR(133usize as *const u8)) {
+        let f: FnAllowDarkModeForWindow = std::mem::transmute(p);
+        let _ = f(hwnd, BOOL(allow as i32));
+    }
+}
+
+/// 标题栏暗色（DWM 官方属性，Win10 2004+）。
+/// 暗色下进一步用 DWMWA_CAPTION_COLOR/BORDER_COLOR 把标题栏染成与窗体一致的颜色，
+/// 消除系统默认深色标题栏与自绘窗体之间的割裂（Win11 22000+ 生效）。
+unsafe fn set_titlebar_dark(hwnd: HWND, dark: bool) {
+    let v = BOOL(dark as i32);
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_USE_IMMERSIVE_DARK_MODE,
+        &v as *const _ as *const c_void,
+        std::mem::size_of::<BOOL>() as u32,
+    );
+    let theme = if dark { DARK_THEME } else { LIGHT_THEME };
+    let caption = theme.popup_bg;
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_CAPTION_COLOR,
+        &caption as *const _ as *const c_void,
+        std::mem::size_of::<COLORREF>() as u32,
+    );
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_BORDER_COLOR,
+        &caption as *const _ as *const c_void,
+        std::mem::size_of::<COLORREF>() as u32,
+    );
+    let text = theme.text_primary;
+    let _ = DwmSetWindowAttribute(
+        hwnd,
+        DWMWA_TEXT_COLOR,
+        &text as *const _ as *const c_void,
+        std::mem::size_of::<COLORREF>() as u32,
+    );
+}
+
+/// 给原生子控件套暗色主题（滚动条/复选框/下拉箭头）。
+unsafe fn apply_control_theme(hwnd: HWND, dark: bool) {
+    allow_dark_for_window(hwnd, dark);
+    let theme = if dark { w!("DarkMode_Explorer") } else { w!("Explorer") };
+    let _ = SetWindowTheme(hwnd, theme, None);
+}
+
 /// 共享 UI 状态（popup 拥有，设置窗口借用其指针）。
 struct UiState {
     state: AppState,
@@ -157,6 +334,12 @@ struct UiState {
     tray_icon: HICON,
     app_icon: HICON,
     nid: NOTIFYICONDATAW,
+    /// 当前配色（随系统明暗切换）。
+    theme: Theme,
+    /// 设置窗口背景刷（暗色时用于填充客户区与控件背景）。
+    bg_brush: HBRUSH,
+    /// 设置窗口编辑框 / 日志背景刷。
+    ctrl_brush: HBRUSH,
     // 设置控件。
     tab: HWND,
     /// Tab 主题句柄，用于把控件背景填成与 Tab 页一致的底色。
@@ -172,6 +355,11 @@ struct UiState {
     ed_ip: HWND,
     ed_url: HWND,
     ed_log: HWND,
+    /// 日志框的自绘暗色滚动条（替代原生黑色滚动条）。
+    log_sb: HWND,
+    /// 滚动条拖动中标记与拖动起点相对滑块顶部的偏移。
+    sb_drag: bool,
+    sb_drag_off: i32,
     btn_save_external: HWND,
 }
 
@@ -191,12 +379,19 @@ impl Drop for UiState {
             let _ = DeleteObject(HGDIOBJ(self.font_small.0));
             let _ = DeleteObject(HGDIOBJ(self.font_icon.0));
             let _ = DeleteObject(HGDIOBJ(self.font_dot.0));
+            if !self.bg_brush.is_invalid() {
+                let _ = DeleteObject(HGDIOBJ(self.bg_brush.0));
+            }
+            if !self.ctrl_brush.is_invalid() {
+                let _ = DeleteObject(HGDIOBJ(self.ctrl_brush.0));
+            }
         }
     }
 }
 
 const POPUP_CLASS: PCWSTR = w!("ChatputPopup");
 const SETTINGS_CLASS: PCWSTR = w!("ChatputSettings");
+const LOG_SB_CLASS: PCWSTR = w!("ChatputLogScrollbar");
 
 /// 创建 popup 与托盘并运行消息循环。
 pub fn run(state: AppState, ui_tx: UnboundedSender<UiCommand>, settings: AppSettings) {
@@ -243,6 +438,26 @@ pub fn run(state: AppState, ui_tx: UnboundedSender<UiCommand>, settings: AppSett
         };
         RegisterClassW(&set_wc);
 
+        // 日志自绘滚动条窗口类（暗色下替换原生黑色滚动条）。
+        let sb_wc = WNDCLASSW {
+            style: CS_HREDRAW | CS_VREDRAW,
+            lpfnWndProc: Some(log_scrollbar_wndproc),
+            hInstance: hinstance,
+            hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            lpszClassName: LOG_SB_CLASS,
+            ..Default::default()
+        };
+        RegisterClassW(&sb_wc);
+
+        // 读取当前系统主题，并让原生控件可跟随暗色。
+        let theme = current_theme();
+        set_preferred_app_mode(theme.dark);
+        let (bg_brush, ctrl_brush) = if theme.dark {
+            (CreateSolidBrush(theme.popup_bg), CreateSolidBrush(theme.control_bg))
+        } else {
+            (HBRUSH(null_mut()), HBRUSH(null_mut()))
+        };
+
         let st = Box::new(UiState {
             state,
             settings,
@@ -261,6 +476,9 @@ pub fn run(state: AppState, ui_tx: UnboundedSender<UiCommand>, settings: AppSett
             tray_icon: create_tray_icon(),
             app_icon: create_app_icon(256),
             nid: NOTIFYICONDATAW::default(),
+            theme,
+            bg_brush,
+            ctrl_brush,
             tab: HWND(null_mut()),
             tab_theme: HTHEME::default(),
             cur_tab: 0,
@@ -273,6 +491,9 @@ pub fn run(state: AppState, ui_tx: UnboundedSender<UiCommand>, settings: AppSett
             ed_ip: HWND(null_mut()),
             ed_url: HWND(null_mut()),
             ed_log: HWND(null_mut()),
+            log_sb: HWND(null_mut()),
+            sb_drag: false,
+            sb_drag_off: 0,
             btn_save_external: HWND(null_mut()),
         });
         let ptr = Box::into_raw(st);
@@ -363,6 +584,19 @@ unsafe extern "system" fn popup_wndproc(
             LRESULT(0)
         }
         WM_TIMER => {
+            if wparam.0 == TIMER_TRAY_REFRESH {
+                // 一次性：主题切换后注册表已稳定，按当前任务栏明暗重建托盘图标。
+                let _ = KillTimer(hwnd, TIMER_TRAY_REFRESH);
+                if let Some(st) = state_ptr(hwnd) {
+                    let old_icon = st.tray_icon;
+                    st.tray_icon = create_tray_icon();
+                    refresh_tray(st);
+                    if !old_icon.is_invalid() {
+                        let _ = DestroyIcon(old_icon);
+                    }
+                }
+                return LRESULT(0);
+            }
             if IsWindowVisible(hwnd).as_bool() {
                 let _ = InvalidateRect(hwnd, None, FALSE);
             }
@@ -424,6 +658,13 @@ unsafe extern "system" fn popup_wndproc(
                 SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
             }
             LRESULT(0)
+        }
+        WM_SETTINGCHANGE => {
+            // 系统明暗主题切换会广播此消息（lParam 指向 "ImmersiveColorSet"）。
+            if let Some(st) = state_ptr(hwnd) {
+                refresh_theme(st);
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
@@ -507,6 +748,52 @@ unsafe fn add_tray(st: &mut UiState) {
 unsafe fn refresh_tray(st: &mut UiState) {
     let _ = Shell_NotifyIconW(NIM_DELETE, &st.nid);
     add_tray(st);
+}
+
+/// 系统明暗主题切换：刷新配色、画刷、托盘图标，并重绘 popup 与设置窗口。
+unsafe fn refresh_theme(st: &mut UiState) {
+    let new = current_theme();
+    if new.dark == st.theme.dark {
+        return;
+    }
+    st.theme = new;
+    set_preferred_app_mode(new.dark);
+
+    // 重建暗色画刷。
+    if !st.bg_brush.is_invalid() {
+        let _ = DeleteObject(HGDIOBJ(st.bg_brush.0));
+        st.bg_brush = HBRUSH(null_mut());
+    }
+    if !st.ctrl_brush.is_invalid() {
+        let _ = DeleteObject(HGDIOBJ(st.ctrl_brush.0));
+        st.ctrl_brush = HBRUSH(null_mut());
+    }
+    if new.dark {
+        st.bg_brush = CreateSolidBrush(new.popup_bg);
+        st.ctrl_brush = CreateSolidBrush(new.control_bg);
+    }
+
+    // 托盘图标随任务栏明暗重绘。
+    let old_icon = st.tray_icon;
+    st.tray_icon = create_tray_icon();
+    refresh_tray(st);
+    if !old_icon.is_invalid() {
+        let _ = DestroyIcon(old_icon);
+    }
+    // 任务栏的 SystemUsesLightTheme 注册表项在广播此消息时可能尚未落地，
+    // 故再安排一次延迟重建，确保托盘图标颜色最终与任务栏一致。
+    SetTimer(st.popup, TIMER_TRAY_REFRESH, 600, None);
+
+    let _ = InvalidateRect(st.popup, None, TRUE);
+
+    // 设置窗口若已打开：更新标题栏并重建控件以套用新主题。
+    if !st.settings_win.is_invalid() {
+        allow_dark_for_window(st.settings_win, new.dark);
+        set_titlebar_dark(st.settings_win, new.dark);
+        let win = st.settings_win;
+        let _ = InvalidateRect(win, None, TRUE);
+        let _ = PostMessageW(win, WM_REBUILD_SETTINGS, WPARAM(0), LPARAM(0));
+    }
 }
 
 unsafe fn show_tray_menu(st: &UiState) {
@@ -829,7 +1116,7 @@ unsafe fn paint_popup(st: &mut UiState) {
     let bmp = CreateCompatibleBitmap(hdc, w, h);
     let old_bmp = SelectObject(mem, HGDIOBJ(bmp.0));
 
-    let bg = CreateSolidBrush(COLORREF(0x00F7F7F7));
+    let bg = CreateSolidBrush(st.theme.popup_bg);
     FillRect(mem, &rc, bg);
     let _ = DeleteObject(HGDIOBJ(bg.0));
     SetBkMode(mem, TRANSPARENT);
@@ -845,8 +1132,8 @@ unsafe fn paint_popup(st: &mut UiState) {
     let _ = EndPaint(hwnd, &ps);
 }
 
-unsafe fn divider(hdc: HDC, x0: i32, x1: i32, y: i32) {
-    let pen = CreatePen(PS_SOLID, 1, COLORREF(0x00E2E2E2));
+unsafe fn divider(hdc: HDC, x0: i32, x1: i32, y: i32, color: COLORREF) {
+    let pen = CreatePen(PS_SOLID, 1, color);
     let old = SelectObject(hdc, HGDIOBJ(pen.0));
     let _ = MoveToEx(hdc, x0, y, None);
     let _ = LineTo(hdc, x1, y);
@@ -883,11 +1170,11 @@ unsafe fn paint_popup_body(st: &mut UiState, hdc: HDC, rc: &RECT) {
 
     // 顶部状态。
     let dot_color = if connected {
-        COLORREF(0x0034C759)
+        STATE_CONNECTED
     } else if service_active {
-        COLORREF(0x00FF950A)
+        STATE_ACTIVE
     } else {
-        COLORREF(0x008E8E8E)
+        st.theme.idle_dot
     };
     // 抗锯齿圆点字形，垂直居中于标题/副标题两行之间。
     let dot_rc = RECT { left: pad, top: y + 7, right: pad + 14, bottom: y + 31 };
@@ -896,7 +1183,7 @@ unsafe fn paint_popup_body(st: &mut UiState, hdc: HDC, rc: &RECT) {
     text_out(
         hdc,
         st.font_heading,
-        COLORREF(0x00202020),
+        st.theme.text_primary,
         pad + 20,
         y - 1,
         &localization::t("ChatPUT", "ChatPUT"),
@@ -906,10 +1193,10 @@ unsafe fn paint_popup_body(st: &mut UiState, hdc: HDC, rc: &RECT) {
     } else {
         status
     };
-    text_out(hdc, st.font_small, COLORREF(0x00707070), pad + 20, y + 24, &line);
+    text_out(hdc, st.font_small, st.theme.text_secondary, pad + 20, y + 24, &line);
     y += 52;
 
-    divider(hdc, pad, rc.right - pad, y);
+    divider(hdc, pad, rc.right - pad, y, st.theme.line);
     y += 12;
 
     // 二维码白底卡片。
@@ -939,14 +1226,14 @@ unsafe fn paint_popup_body(st: &mut UiState, hdc: HDC, rc: &RECT) {
 
     if !url.is_empty() {
         let r = RECT { left: rc.left, top: y, right: rc.right, bottom: y + 16 };
-        draw_text_centered(hdc, st.font_small, COLORREF(0x00808080), r, &url);
+        draw_text_centered(hdc, st.font_small, st.theme.text_secondary, r, &url);
         y += 18;
     }
     let hint = RECT { left: rc.left, top: y, right: rc.right, bottom: y + 16 };
     draw_text_centered(
         hdc,
         st.font_small,
-        COLORREF(0x00A0A0A0),
+        st.theme.text_tertiary,
         hint,
         &localization::t("手机扫码即可配对", "Scan with your phone to pair"),
     );
@@ -954,7 +1241,7 @@ unsafe fn paint_popup_body(st: &mut UiState, hdc: HDC, rc: &RECT) {
     // 底部分隔线 + 操作。
     let btn_h = 34;
     let by = rc.bottom - btn_h - 16;
-    divider(hdc, pad, rc.right - pad, by - 14);
+    divider(hdc, pad, rc.right - pad, by - 14, st.theme.line);
 
     let (toggle_btn, toggle_label, toggle_icon) = if service_active {
         (Btn::Stop, localization::t("停止", "Stop"), IconKind::Stop)
@@ -985,9 +1272,9 @@ unsafe fn draw_button(
     accent: bool,
 ) {
     let (fill, border, textc) = if accent {
-        (COLORREF(0x00FF950A), COLORREF(0x00FF950A), COLORREF(0x00FFFFFF))
+        (ACCENT, ACCENT, ACCENT_TEXT)
     } else {
-        (COLORREF(0x00FFFFFF), COLORREF(0x00C8C8C8), COLORREF(0x00303030))
+        (st.theme.surface, st.theme.border, st.theme.button_text)
     };
     let brush = CreateSolidBrush(fill);
     let pen = CreatePen(PS_SOLID, 1, border);
@@ -1042,8 +1329,15 @@ unsafe fn draw_icon(st: &UiState, hdc: HDC, kind: IconKind, rect: RECT, color: C
 
 unsafe fn open_settings(st: &mut UiState) {
     if !st.settings_win.is_invalid() {
-        let _ = ShowWindow(st.settings_win, SW_SHOW);
-        let _ = SetForegroundWindow(st.settings_win);
+        let win = st.settings_win;
+        // 若被最小化先还原，再强制置顶到前台（被其他窗口覆盖时也能切回）。
+        if IsIconic(win).as_bool() {
+            let _ = ShowWindow(win, SW_RESTORE);
+        } else {
+            let _ = ShowWindow(win, SW_SHOW);
+        }
+        let _ = BringWindowToTop(win);
+        let _ = SetForegroundWindow(win);
         return;
     }
     let ptr = st as *mut UiState;
@@ -1069,6 +1363,11 @@ unsafe fn open_settings(st: &mut UiState) {
     )
     .unwrap_or_default();
     st.settings_win = hwnd;
+    // 暗色：标题栏 + 窗口暗色，原生控件随之变深。
+    if st.theme.dark {
+        allow_dark_for_window(hwnd, true);
+        set_titlebar_dark(hwnd, true);
+    }
     // 设置窗口标题栏 / 任务栏 / Alt+Tab 图标。
     if !st.app_icon.is_invalid() {
         SendMessageW(hwnd, WM_SETICON, WPARAM(ICON_BIG as usize), LPARAM(st.app_icon.0 as isize));
@@ -1098,10 +1397,36 @@ unsafe extern "system" fn settings_wndproc(
             }
             LRESULT(0)
         }
-        WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => {
+        WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLORLISTBOX => {
+            let hdc = HDC(wparam.0 as *mut c_void);
+            let ctl = HWND(lparam.0 as *mut c_void);
+            // 暗色：编辑框走深底深字，标签/按钮透明文字置于暗背景上。
+            if let Some(st) = state_ptr(hwnd) {
+                if st.theme.dark {
+                    if msg == WM_CTLCOLORLISTBOX {
+                        // 下拉框展开后的列表：深底深字。
+                        SetTextColor(hdc, st.theme.control_text);
+                        SetBkColor(hdc, st.theme.control_bg);
+                        return LRESULT(st.ctrl_brush.0 as isize);
+                    }
+                    if msg == WM_CTLCOLOREDIT {
+                        SetTextColor(hdc, st.theme.control_text);
+                        SetBkColor(hdc, st.theme.control_bg);
+                        return LRESULT(st.ctrl_brush.0 as isize);
+                    }
+                    SetBkMode(hdc, TRANSPARENT);
+                    let text = st
+                        .colored_statics
+                        .iter()
+                        .find(|(h, _)| *h == ctl)
+                        .map(|(_, c)| *c)
+                        .unwrap_or(st.theme.text_primary);
+                    SetTextColor(hdc, text);
+                    SetBkColor(hdc, st.theme.popup_bg);
+                    return LRESULT(st.bg_brush.0 as isize);
+                }
+            }
             if msg == WM_CTLCOLOREDIT {
-                let hdc = HDC(wparam.0 as *mut c_void);
-                let ctl = HWND(lparam.0 as *mut c_void);
                 if let Some(st) = state_ptr(hwnd) {
                     if ctl == st.ed_log {
                         SetTextColor(hdc, COLORREF(0x00000000));
@@ -1111,9 +1436,18 @@ unsafe extern "system" fn settings_wndproc(
                     }
                 }
             }
+            // 浅色下拉列表：交给系统默认绘制，避免误用 Tab 页底色导致悬停文字异常。
+            if msg == WM_CTLCOLORLISTBOX {
+                return DefWindowProcW(hwnd, msg, wparam, lparam);
+            }
+            // CBS_DROPDOWNLIST 下拉框的面会发 WM_CTLCOLORSTATIC；若按普通标签用 Tab 底色
+            // 覆盖其客户区，会把边框与下拉箭头一起涂掉。故交给系统默认绘制。
+            if let Some(st) = state_ptr(hwnd) {
+                if ctl == st.cb_transport || ctl == st.cb_language {
+                    return DefWindowProcW(hwnd, msg, wparam, lparam);
+                }
+            }
             // 用 Tab 页主题底色填充标签/按钮背景，使其与 Tab 页面一致（非纯白）。
-            let hdc = HDC(wparam.0 as *mut c_void);
-            let ctl = HWND(lparam.0 as *mut c_void);
             SetBkMode(hdc, TRANSPARENT);
             if let Some(st) = state_ptr(hwnd) {
                 // 模式徽标圆点等需要自定义文字色的 STATIC。
@@ -1131,6 +1465,18 @@ unsafe extern "system" fn settings_wndproc(
             }
             let brush = GetSysColorBrush(COLOR_BTNFACE);
             LRESULT(brush.0 as isize)
+        }
+        WM_ERASEBKGND => {
+            if let Some(st) = state_ptr(hwnd) {
+                if st.theme.dark && !st.bg_brush.is_invalid() {
+                    let hdc = HDC(wparam.0 as *mut c_void);
+                    let mut rc = RECT::default();
+                    let _ = GetClientRect(hwnd, &mut rc);
+                    FillRect(hdc, &rc, st.bg_brush);
+                    return LRESULT(1);
+                }
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         WM_NOTIFY => {
             let nm = lparam.0 as *const NmHdr;
@@ -1188,6 +1534,293 @@ unsafe extern "system" fn settings_wndproc(
     }
 }
 
+/// Tab 控件子类过程：暗色主题下完全自绘标签与页面背景。
+/// 原生 SysTabControl32 在暗色下仍画浅色标签/边框，故拦截 WM_PAINT 自绘：
+/// 客户区填暗背景（表单控件为兄弟窗口，受 WS_CLIPSIBLINGS 裁剪不会被覆盖），
+/// 再逐个标签绘制文字与选中高亮。
+unsafe extern "system" fn tab_dark_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let prev = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+    let call_prev = |m: u32, w: WPARAM, l: LPARAM| -> LRESULT {
+        if prev != 0 {
+            let f: unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT =
+                std::mem::transmute(prev as usize);
+            f(hwnd, m, w, l)
+        } else {
+            DefWindowProcW(hwnd, m, w, l)
+        }
+    };
+    let st_ptr = GetPropW(hwnd, w!("ChatputState")).0 as *const UiState;
+    let dark = !st_ptr.is_null() && (*st_ptr).theme.dark;
+    if !dark {
+        return call_prev(msg, wparam, lparam);
+    }
+    let st = &*st_ptr;
+    match msg {
+        WM_ERASEBKGND => {
+            let hdc = HDC(wparam.0 as *mut c_void);
+            let mut rc = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc);
+            FillRect(hdc, &rc, st.bg_brush);
+            LRESULT(1)
+        }
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT::default();
+            let hdc = BeginPaint(hwnd, &mut ps);
+            let mut client = RECT::default();
+            let _ = GetClientRect(hwnd, &mut client);
+            FillRect(hdc, &client, st.bg_brush);
+
+            let font = HFONT(SendMessageW(hwnd, WM_GETFONT, WPARAM(0), LPARAM(0)).0 as *mut c_void);
+            let old_font = SelectObject(hdc, HGDIOBJ(font.0));
+            SetBkMode(hdc, TRANSPARENT);
+
+            let count = SendMessageW(hwnd, TCM_GETITEMCOUNT, WPARAM(0), LPARAM(0)).0 as i32;
+            let sel = SendMessageW(hwnd, TCM_GETCURSEL, WPARAM(0), LPARAM(0)).0 as i32;
+            for i in 0..count {
+                let mut rc = RECT::default();
+                SendMessageW(
+                    hwnd,
+                    TCM_GETITEMRECT,
+                    WPARAM(i as usize),
+                    LPARAM(&mut rc as *mut RECT as isize),
+                );
+                let mut buf = [0u16; 64];
+                let mut item = TcItemW {
+                    mask: TCIF_TEXT,
+                    dw_state: 0,
+                    dw_state_mask: 0,
+                    psz_text: buf.as_mut_ptr(),
+                    cch_text_max: buf.len() as i32,
+                    i_image: 0,
+                    l_param: 0,
+                };
+                SendMessageW(
+                    hwnd,
+                    TCM_GETITEMW,
+                    WPARAM(i as usize),
+                    LPARAM(&mut item as *mut TcItemW as isize),
+                );
+                if i == sel {
+                    FillRect(hdc, &rc, st.ctrl_brush);
+                    SetTextColor(hdc, st.theme.text_primary);
+                } else {
+                    SetTextColor(hdc, st.theme.text_secondary);
+                }
+                let len = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());
+                let mut tr = rc;
+                DrawTextW(hdc, &mut buf[..len], &mut tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            }
+            SelectObject(hdc, old_font);
+            let _ = EndPaint(hwnd, &ps);
+            LRESULT(0)
+        }
+        WM_NCDESTROY => {
+            let _ = RemovePropW(hwnd, w!("ChatputState"));
+            call_prev(msg, wparam, lparam)
+        }
+        _ => call_prev(msg, wparam, lparam),
+    }
+}
+
+/// 日志框可见区域行高（含行间距）。
+unsafe fn log_line_height(edit: HWND) -> i32 {
+    let hdc = GetDC(edit);
+    let font = HFONT(SendMessageW(edit, WM_GETFONT, WPARAM(0), LPARAM(0)).0 as *mut c_void);
+    let old = SelectObject(hdc, HGDIOBJ(font.0));
+    let mut tm = TEXTMETRICW::default();
+    let _ = GetTextMetricsW(hdc, &mut tm);
+    SelectObject(hdc, old);
+    ReleaseDC(edit, hdc);
+    (tm.tmHeight + tm.tmExternalLeading).max(1)
+}
+
+/// 返回日志框 (首个可见行, 总行数, 可见行数)。
+unsafe fn log_scroll_metrics(edit: HWND) -> (i32, i32, i32) {
+    let total = (SendMessageW(edit, EM_GETLINECOUNT, WPARAM(0), LPARAM(0)).0 as i32).max(1);
+    let first = SendMessageW(edit, EM_GETFIRSTVISIBLELINE, WPARAM(0), LPARAM(0)).0 as i32;
+    let mut rc = RECT::default();
+    SendMessageW(edit, EM_GETRECT, WPARAM(0), LPARAM(&mut rc as *mut RECT as isize));
+    let visible = ((rc.bottom - rc.top) / log_line_height(edit)).max(1);
+    (first, total, visible)
+}
+
+/// 子类化日志框：滚轮滚动并刷新自绘滚动条。
+unsafe extern "system" fn log_edit_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let prev = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+    let call_prev = |m: u32, w: WPARAM, l: LPARAM| -> LRESULT {
+        if prev != 0 {
+            let f: unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT =
+                std::mem::transmute(prev as usize);
+            f(hwnd, m, w, l)
+        } else {
+            DefWindowProcW(hwnd, m, w, l)
+        }
+    };
+    match msg {
+        WM_MOUSEWHEEL => {
+            let delta = ((wparam.0 >> 16) & 0xFFFF) as i16 as i32;
+            let lines = -(delta / 120) * 3;
+            SendMessageW(hwnd, EM_LINESCROLL, WPARAM(0), LPARAM(lines as isize));
+            let sb = GetPropW(hwnd, w!("ChatputLogSb"));
+            if !sb.0.is_null() {
+                let _ = InvalidateRect(HWND(sb.0), None, FALSE);
+            }
+            LRESULT(0)
+        }
+        WM_KEYDOWN | WM_KEYUP | WM_LBUTTONUP => {
+            let r = call_prev(msg, wparam, lparam);
+            let sb = GetPropW(hwnd, w!("ChatputLogSb"));
+            if !sb.0.is_null() {
+                let _ = InvalidateRect(HWND(sb.0), None, FALSE);
+            }
+            r
+        }
+        WM_NCDESTROY => {
+            let _ = RemovePropW(hwnd, w!("ChatputState"));
+            let _ = RemovePropW(hwnd, w!("ChatputLogSb"));
+            call_prev(msg, wparam, lparam)
+        }
+        _ => call_prev(msg, wparam, lparam),
+    }
+}
+
+/// 日志自绘暗色滚动条窗口过程。
+unsafe extern "system" fn log_scrollbar_wndproc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    let st_ptr = GetPropW(hwnd, w!("ChatputState")).0 as *mut UiState;
+    if st_ptr.is_null() {
+        return DefWindowProcW(hwnd, msg, wparam, lparam);
+    }
+    let st = &mut *st_ptr;
+    let edit = st.ed_log;
+    let track_h = {
+        let mut rc = RECT::default();
+        let _ = GetClientRect(hwnd, &mut rc);
+        rc.bottom - rc.top
+    };
+    // 计算滑块几何。
+    let thumb_geom = || -> Option<(i32, i32, i32, i32)> {
+        if edit.is_invalid() {
+            return None;
+        }
+        let (first, total, visible) = log_scroll_metrics(edit);
+        if total <= visible {
+            return None; // 内容未超出，无需滑块。
+        }
+        let max_first = total - visible;
+        let min_thumb = 24;
+        let thumb_h = ((track_h * visible / total).max(min_thumb)).min(track_h);
+        let span = track_h - thumb_h;
+        let thumb_top = if max_first > 0 { span * first / max_first } else { 0 };
+        Some((thumb_top, thumb_h, first, max_first))
+    };
+    match msg {
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT::default();
+            let hdc = BeginPaint(hwnd, &mut ps);
+            let mut rc = RECT::default();
+            let _ = GetClientRect(hwnd, &mut rc);
+            // 轨道：与日志框底色一致，消除割裂。
+            let track = CreateSolidBrush(st.theme.control_bg);
+            FillRect(hdc, &rc, track);
+            let _ = DeleteObject(HGDIOBJ(track.0));
+            if let Some((top, h, _, _)) = thumb_geom() {
+                // 滑块：中性灰，留 2px 内边距形成细长圆角观感。
+                let thumb_color = if st.theme.dark {
+                    COLORREF(0x005A5A5A)
+                } else {
+                    COLORREF(0x00C0C0C0)
+                };
+                let br = CreateSolidBrush(thumb_color);
+                let pad = 2;
+                let tr = RECT {
+                    left: rc.left + pad,
+                    top: top + pad,
+                    right: rc.right - pad,
+                    bottom: top + h - pad,
+                };
+                let old = SelectObject(hdc, HGDIOBJ(br.0));
+                let oldpen = SelectObject(hdc, HGDIOBJ(GetStockObject(NULL_PEN).0));
+                let r = (rc.right - rc.left - pad * 2).min(tr.bottom - tr.top);
+                let _ = RoundRect(hdc, tr.left, tr.top, tr.right, tr.bottom, r, r);
+                SelectObject(hdc, oldpen);
+                SelectObject(hdc, old);
+                let _ = DeleteObject(HGDIOBJ(br.0));
+            }
+            let _ = EndPaint(hwnd, &ps);
+            LRESULT(0)
+        }
+        WM_ERASEBKGND => LRESULT(1),
+        WM_LBUTTONDOWN => {
+            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+            if let Some((top, h, _, _)) = thumb_geom() {
+                if y >= top && y < top + h {
+                    // 命中滑块：开始拖动。
+                    st.sb_drag = true;
+                    st.sb_drag_off = y - top;
+                    SetCapture(hwnd);
+                } else {
+                    // 点击轨道空白：按页滚动。
+                    let (_, _, visible) = log_scroll_metrics(edit);
+                    let dir = if y < top { -visible } else { visible };
+                    SendMessageW(edit, EM_LINESCROLL, WPARAM(0), LPARAM(dir as isize));
+                    let _ = InvalidateRect(hwnd, None, FALSE);
+                }
+            }
+            LRESULT(0)
+        }
+        WM_MOUSEMOVE => {
+            if st.sb_drag {
+                let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+                if let Some((_, h, first, max_first)) = thumb_geom() {
+                    let span = (track_h - h).max(1);
+                    let new_top = (y - st.sb_drag_off).clamp(0, span);
+                    let new_first = new_top * max_first / span;
+                    let delta = new_first - first;
+                    if delta != 0 {
+                        SendMessageW(edit, EM_LINESCROLL, WPARAM(0), LPARAM(delta as isize));
+                        let _ = InvalidateRect(hwnd, None, FALSE);
+                    }
+                }
+            }
+            LRESULT(0)
+        }
+        WM_LBUTTONUP => {
+            if st.sb_drag {
+                st.sb_drag = false;
+                let _ = ReleaseCapture();
+            }
+            LRESULT(0)
+        }
+        WM_MOUSEWHEEL => {
+            let delta = ((wparam.0 >> 16) & 0xFFFF) as i16 as i32;
+            let lines = -(delta / 120) * 3;
+            SendMessageW(edit, EM_LINESCROLL, WPARAM(0), LPARAM(lines as isize));
+            let _ = InvalidateRect(hwnd, None, FALSE);
+            LRESULT(0)
+        }
+        WM_NCDESTROY => {
+            let _ = RemovePropW(hwnd, w!("ChatputState"));
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
 unsafe fn rebuild_settings(st: &mut UiState, hwnd: HWND) {
     if !st.tab.is_invalid() {
         let _ = DestroyWindow(st.tab);
@@ -1223,6 +1856,16 @@ unsafe fn build_settings(st: &mut UiState, hwnd: HWND) {
         font,
     );
     st.tab = tab;
+    if st.theme.dark {
+        apply_control_theme(tab, true);
+        // Tab 控件自身的页面主体在暗色主题下仍画成浅色，故子类化其窗口过程，
+        // 在默认绘制前把客户区填成暗背景。
+        let prev = SetWindowLongPtrW(tab, GWLP_WNDPROC, tab_dark_wndproc as *const () as isize);
+        SetWindowLongPtrW(tab, GWLP_USERDATA, prev);
+        let hwnd_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+        // 把 UiState 指针挂到 tab 的属性上，供子类过程取主题画刷。
+        let _ = SetPropW(tab, w!("ChatputState"), HANDLE(hwnd_ptr as *mut c_void));
+    }
     // 为设置窗口打开 Tab 主题，供 WM_CTLCOLOR 填充控件背景。
     st.tab_theme = OpenThemeData(hwnd, w!("TAB"));
     let host = hwnd; // 表单控件的父窗口（设置窗口）。
@@ -1319,11 +1962,25 @@ unsafe fn build_settings(st: &mut UiState, hwnd: HWND) {
     );
 
     // —— 日志 ——
+    let log_x = ox;
+    let log_w = SET_W - 32 - ox - 8;
+    let sb_w = 12;
     st.ed_log = add_ctrl(
         st, 3, host, w!("EDIT"), "",
-        WS_TABSTOP.0 | WS_BORDER.0 | WS_VSCROLL.0 | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
-        ox, 56, SET_W - 32 - ox - 8, 250, ID_ED_LOG, st.font_small,
+        WS_TABSTOP.0 | WS_BORDER.0 | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
+        log_x, 56, log_w - sb_w, 250, ID_ED_LOG, st.font_small,
     );
+    // 自绘暗色滚动条紧贴日志框右侧（仅暗色启用；浅色仍用原生但此处统一自绘以保持一致）。
+    let sb = child(host, LOG_SB_CLASS, "", WS_CLIPSIBLINGS.0, log_x + log_w - sb_w, 56, sb_w, 250, 0, st.font_small);
+    let host_ptr = GetWindowLongPtrW(host, GWLP_USERDATA);
+    let _ = SetPropW(sb, w!("ChatputState"), HANDLE(host_ptr as *mut c_void));
+    st.log_sb = sb;
+    st.tab_ctrls.push((3, sb));
+    // 子类化日志框：滚轮滚动并同步自绘滚动条（原生滚动条已移除）。
+    let eprev = SetWindowLongPtrW(st.ed_log, GWLP_WNDPROC, log_edit_wndproc as *const () as isize);
+    SetWindowLongPtrW(st.ed_log, GWLP_USERDATA, eprev);
+    let _ = SetPropW(st.ed_log, w!("ChatputState"), HANDLE(host_ptr as *mut c_void));
+    let _ = SetPropW(st.ed_log, w!("ChatputLogSb"), HANDLE(sb.0));
     add_ctrl(
         st, 3, host, w!("BUTTON"),
         &localization::t("清空", "Clear"),
@@ -1336,7 +1993,7 @@ unsafe fn build_settings(st: &mut UiState, hwnd: HWND) {
 
 unsafe fn add_mode_badge(st: &mut UiState, tab: i32, parent: HWND, x: i32, y: i32, active: bool) {
     // 圆点：生效=绿色，未启用=灰色（对齐 macOS modeBadge）。
-    let dot_color = if active { COLORREF(0x0034C759) } else { COLORREF(0x00B0B0B0) };
+    let dot_color = if active { STATE_CONNECTED } else { st.theme.badge_idle };
     let dot = add_ctrl(st, tab, parent, w!("STATIC"), "\u{E91F}", SS_LEFT, x, y + 2, 14, 14, 0, st.font_dot);
     st.colored_statics.push((dot, dot_color));
     let text = if active {
@@ -1373,6 +2030,10 @@ unsafe fn refresh_log(st: &UiState) {
     let n = text.encode_utf16().count() as i32;
     SendMessageW(st.ed_log, EM_SETSEL, WPARAM(n as usize), LPARAM(n as isize));
     SendMessageW(st.ed_log, EM_SCROLLCARET, WPARAM(0), LPARAM(0));
+    // 同步自绘滚动条。
+    if !st.log_sb.is_invalid() {
+        let _ = InvalidateRect(st.log_sb, None, FALSE);
+    }
 }
 
 unsafe fn handle_settings_command(st: &mut UiState, id: usize, code: u16) {
@@ -1513,6 +2174,9 @@ unsafe fn add_ctrl(
     font: HFONT,
 ) -> HWND {
     let h = child(parent, class, text, style_extra, x, y, w, h, id, font);
+    if st.theme.dark {
+        apply_control_theme(h, true);
+    }
     st.tab_ctrls.push((tab, h));
     h
 }
@@ -1554,11 +2218,21 @@ unsafe fn section_header(st: &mut UiState, tab: i32, parent: HWND, x: i32, w: i3
 
 #[allow(clippy::too_many_arguments)]
 unsafe fn add_combo(st: &mut UiState, tab: i32, parent: HWND, x: i32, y: i32, w: i32, id: usize, font: HFONT) -> HWND {
-    add_ctrl(
+    let h = add_ctrl(
         st, tab, parent, w!("COMBOBOX"), "",
         WS_TABSTOP.0 | WS_VSCROLL.0 | CBS_DROPDOWNLIST | CBS_HASSTRINGS,
         x, y, w, 220, id, font,
-    )
+    );
+    if st.theme.dark {
+        // 下拉框需要 CFD（Combobox Flat Dropdown）主题，列表与按钮才会变暗。
+        allow_dark_for_window(h, true);
+        let _ = SetWindowTheme(h, w!("DarkMode_CFD"), None);
+    } else {
+        // 浅色：清除任何暗色覆盖，恢复系统默认 combobox 主题（边框/下拉箭头/列表）。
+        allow_dark_for_window(h, false);
+        let _ = SetWindowTheme(h, None, None);
+    }
+    h
 }
 
 #[allow(clippy::too_many_arguments)]

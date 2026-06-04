@@ -12,10 +12,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, WPARAM};
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, EnumWindows, GetForegroundWindow, GetMessageW, GetWindowTextLengthW,
-    GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible, PostThreadMessageW, TranslateMessage,
-    EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND, MSG, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
-    WM_QUIT,
+    DispatchMessageW, EnumWindows, GetClassNameW, GetForegroundWindow, GetMessageW,
+    GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
+    PostThreadMessageW, TranslateMessage, EVENT_OBJECT_FOCUS, EVENT_SYSTEM_FOREGROUND, MSG,
+    WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_QUIT,
 };
 use windows::Win32::System::Threading::GetCurrentProcessId;
 
@@ -151,6 +151,11 @@ impl FocusMonitor {
             unsafe {
                 let mut msg = MSG::default();
                 while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
+                    // 补发请求：线程消息（hwnd 为空）不会被派发到窗口过程，需在此显式处理。
+                    if msg.message == WM_APP_RESEND {
+                        emit_current();
+                        continue;
+                    }
                     let _ = TranslateMessage(&msg);
                     DispatchMessageW(&msg);
                 }
@@ -235,6 +240,11 @@ fn emit_current() {
             GetWindowThreadProcessId(hwnd, Some(&mut pid));
         }
         if pid == st.own_pid || pid == 0 {
+            return;
+        }
+
+        // 点击系统桌面时前台窗口变为桌面外壳（Progman/WorkerW），不是可输入目标。
+        if is_desktop_shell(hwnd) {
             return;
         }
 
@@ -344,6 +354,9 @@ unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
     if pid == 0 || pid == own {
         return true.into();
     }
+    if is_desktop_shell(hwnd) {
+        return true.into();
+    }
     let title = window_title(hwnd);
     if title.is_empty() {
         return true.into();
@@ -351,6 +364,23 @@ unsafe extern "system" fn enum_proc(hwnd: HWND, lparam: LPARAM) -> BOOL {
     let set = &mut *(lparam.0 as *mut HashSet<String>);
     set.insert(session_id(hwnd));
     true.into()
+}
+
+/// 是否为系统桌面外壳窗口（点击桌面时的前台窗口）。
+fn is_desktop_shell(hwnd: HWND) -> bool {
+    let class = window_class(hwnd);
+    class == "Progman" || class == "WorkerW"
+}
+
+fn window_class(hwnd: HWND) -> String {
+    unsafe {
+        let mut buf = [0u16; 256];
+        let len = GetClassNameW(hwnd, &mut buf);
+        if len <= 0 {
+            return String::new();
+        }
+        String::from_utf16_lossy(&buf[..len as usize])
+    }
 }
 
 fn session_id(hwnd: HWND) -> String {
