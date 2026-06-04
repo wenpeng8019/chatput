@@ -6,7 +6,7 @@
 ## 架构
 
 ```
-📱 Flutter App ──WebRTC DataChannel──► 💻 原生桌面端 (macOS/Windows)
+📱 原生手机端 (Android/iOS) ──WebRTC DataChannel──► 💻 原生桌面端 (macOS/Windows)
    - IM 会话 UI                            - 焦点窗口监控
    - 系统语音识别(STT)                       - 文字注入(剪贴板+Cmd/Ctrl+V)
         │                                        │
@@ -24,9 +24,9 @@
 |---|---|---|
 | `signaling-server/` | WebRTC 信令服务器（房间+配对+转发） | Node ✅ 已装 |
 | `desktop-macos/` | 原生 macOS 桌面端（Swift/SwiftUI + WebRTC + AXObserver，主力） | Xcode |
-| `desktop-windows/` | 原生 Windows 桌面端（Rust） | Rust |
+| `desktop-windows/` | 原生 Windows 桌面端（Rust + WebRTC + 焦点监控/文字注入） | Rust |
 | `mobile-android/` | 原生 Android App（Kotlin + sherpa-onnx 离线语音识别） | Android SDK/JDK |
-| `mobile-iphone/` | iOS 手机端（计划中，占位） | — |
+| `mobile-iphone/` | 原生 iOS 手机端（Swift/SwiftUI + WebRTC + 系统语音识别） | Xcode |
 
 > ⚠️ 大体积二进制（语音模型、WebRTC/sherpa-onnx 框架）未入库，见 `.gitignore`。
 
@@ -85,10 +85,18 @@ export JAVA_HOME=/path/to/JDK
 ./scripts/build-android.sh --no-deploy        # 只构建，不安装
 ```
 
+### 4) 启动手机端（原生 iOS）
+```bash
+./scripts/build-ios.sh                 # 构建并部署到模拟器
+./scripts/build-ios.sh --open          # 部署后自动打开模拟器
+./scripts/build-ios.sh --generate      # 先用 xcodegen 重新生成工程
+./scripts/build-ios.sh --no-deploy     # 只构建，不安装
+```
+
 ## 路线图
 - [x] Phase 0：三端最小链路打通（语音→P2P→注入）
 - [ ] Phase 1：IM 界面产品化 + 焦点变化自动建会话
-- [ ] Phase 2：体验打磨 + Windows 支持
+- [x] Phase 2：体验打磨 + Windows 支持
 - [ ] Phase 3：Tauri 重写桌面端（体积优化）/ 自建 whisper（可选）
 
 ## 配置
