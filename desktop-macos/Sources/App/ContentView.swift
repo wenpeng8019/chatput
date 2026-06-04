@@ -29,7 +29,7 @@ struct ContentView: View {
                 .fill(state.connected ? Color.green : (state.serviceActive ? Color.orange : Color.gray))
                 .frame(width: 9, height: 9)
             VStack(alignment: .leading, spacing: 1) {
-                Text(L.t("聊入", "Chatput")).font(.system(size: 13, weight: .bold))
+                Text(L.t("ChatPUT", "ChatPUT")).font(.system(size: 13, weight: .bold))
                 Text(state.connected && !state.connectedDevice.isEmpty
                      ? L.t("已连接：", "Connected: ") + state.connectedDevice
                      : state.statusText)

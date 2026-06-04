@@ -281,7 +281,7 @@ pub fn run(state: AppState, ui_tx: UnboundedSender<UiCommand>, settings: AppSett
         let popup = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             POPUP_CLASS,
-            w!("Chatput"),
+            w!("ChatPUT"),
             style,
             0,
             0,
@@ -493,7 +493,7 @@ unsafe fn add_tray(st: &mut UiState) {
         hIcon: st.tray_icon,
         ..Default::default()
     };
-    let tip: Vec<u16> = localization::t("聊入", "Chatput")
+    let tip: Vec<u16> = localization::t("ChatPUT", "ChatPUT")
         .encode_utf16()
         .chain(std::iter::once(0))
         .collect();
@@ -899,7 +899,7 @@ unsafe fn paint_popup_body(st: &mut UiState, hdc: HDC, rc: &RECT) {
         COLORREF(0x00202020),
         pad + 20,
         y - 1,
-        &localization::t("聊入", "Chatput"),
+        &localization::t("ChatPUT", "ChatPUT"),
     );
     let line = if connected && !device.is_empty() {
         localization::t("已连接：", "Connected: ") + &device
@@ -1052,7 +1052,7 @@ unsafe fn open_settings(st: &mut UiState) {
     );
     let sw = GetSystemMetrics(SM_CXSCREEN);
     let sh = GetSystemMetrics(SM_CYSCREEN);
-    let title = to_wide(&localization::t("聊入 · 设置", "Chatput · Settings"));
+    let title = to_wide(&localization::t("ChatPUT · 设置", "ChatPUT · Settings"));
     let hwnd = CreateWindowExW(
         WINDOW_EX_STYLE::default(),
         SETTINGS_CLASS,
@@ -1203,7 +1203,7 @@ unsafe fn rebuild_settings(st: &mut UiState, hwnd: HWND) {
     build_settings(st, hwnd);
     let _ = SetWindowTextW(
         hwnd,
-        PCWSTR(to_wide(&localization::t("聊入 · 设置", "Chatput · Settings")).as_ptr()),
+        PCWSTR(to_wide(&localization::t("ChatPUT · 设置", "ChatPUT · Settings")).as_ptr()),
     );
 }
 

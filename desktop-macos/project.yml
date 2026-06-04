@@ -25,14 +25,14 @@ targets:
     info:
       path: Sources/Info.plist
       properties:
-        CFBundleDisplayName: Chatput
-        CFBundleName: Chatput
+        CFBundleDisplayName: ChatPUT
+        CFBundleName: ChatPUT
         LSMinimumSystemVersion: "12.0"
         NSHumanReadableCopyright: ""
         LSUIElement: true
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
-        NSLocalNetworkUsageDescription: "聊入需要局域网访问，以便在本机运行信令服务器并与手机配对。"
+        NSLocalNetworkUsageDescription: "ChatPUT 需要局域网访问，以便在本机运行信令服务器并与手机配对。"
     entitlements:
       path: Sources/ChatputDesktop.entitlements
       properties:

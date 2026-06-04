@@ -129,7 +129,7 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
             return
         }
 
-        binding.appTitle.text = session!!.app.ifBlank { "聊入" }
+        binding.appTitle.text = session!!.app.ifBlank { "ChatPUT" }
         binding.subtitle.text = session!!.device.ifBlank { session!!.title.ifBlank { "当前窗口" } }
 
         adapter = MessageAdapter(

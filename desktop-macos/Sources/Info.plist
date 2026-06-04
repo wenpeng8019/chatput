@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Chatput</string>
+	<string>ChatPUT</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -13,7 +13,7 @@
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
-	<string>Chatput</string>
+	<string>ChatPUT</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
@@ -32,6 +32,6 @@
 	<key>NSHumanReadableCopyright</key>
 	<string></string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>聊入需要局域网访问，以便在本机运行信令服务器并与手机配对。</string>
+	<string>ChatPUT 需要局域网访问，以便在本机运行信令服务器并与手机配对。</string>
 </dict>
 </plist>

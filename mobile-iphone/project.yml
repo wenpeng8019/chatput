@@ -22,13 +22,13 @@ targets:
     info:
       path: Sources/Info.plist
       properties:
-        CFBundleDisplayName: Chatput
-        CFBundleName: Chatput
+        CFBundleDisplayName: ChatPUT
+        CFBundleName: ChatPUT
         UILaunchScreen: {}
-        NSCameraUsageDescription: "聊入需要使用摄像头扫描桌面端二维码。"
-        NSMicrophoneUsageDescription: "聊入需要使用麦克风识别你的语音输入。"
-        NSSpeechRecognitionUsageDescription: "聊入需要语音识别权限把语音转换成文字。"
-        NSLocalNetworkUsageDescription: "聊入需要访问局域网中的桌面端信令服务。"
+        NSCameraUsageDescription: "ChatPUT 需要使用摄像头扫描桌面端二维码。"
+        NSMicrophoneUsageDescription: "ChatPUT 需要使用麦克风识别你的语音输入。"
+        NSSpeechRecognitionUsageDescription: "ChatPUT 需要语音识别权限把语音转换成文字。"
+        NSLocalNetworkUsageDescription: "ChatPUT 需要访问局域网中的桌面端信令服务。"
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
     dependencies:

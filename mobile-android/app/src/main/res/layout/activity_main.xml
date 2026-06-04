@@ -36,7 +36,7 @@
 				android:id="@+id/app_label"
 				android:layout_width="wrap_content"
 				android:layout_height="wrap_content"
-				android:text="Chatput"
+				android:text="ChatPUT"
 				android:textColor="@color/chatput_accent"
 				android:textSize="12sp"
 				android:textStyle="bold" />

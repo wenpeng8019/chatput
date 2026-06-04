@@ -1,8 +1,8 @@
-# Chatput Design Language
+# ChatPUT Design Language
 
 ## Design Direction
 
-Chatput is an input bridge, not a content destination. The interface should feel quiet, precise, and dependable: it stays close to the user's hand, avoids decorative noise, and makes connection state, current target, and input controls obvious without shouting.
+ChatPUT is an input bridge, not a content destination. The interface should feel quiet, precise, and dependable: it stays close to the user's hand, avoids decorative noise, and makes connection state, current target, and input controls obvious without shouting.
 
 The long-term visual target is: premium, restrained, spacious, and durable. Prefer small refinements that age well over high-contrast decoration.
 

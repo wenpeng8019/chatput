@@ -31,7 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppSettings.shared.$language
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.settingsWindow?.title = L.t("聊入 · 设置", "Chatput · Settings")
+                self?.settingsWindow?.title = L.t("ChatPUT · 设置", "ChatPUT · Settings")
             }
             .store(in: &cancellables)
     }
@@ -43,8 +43,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let button = statusItem.button {
             let image = NSImage(named: "MenuBarIcon")
                 ?? NSImage(systemSymbolName: "keyboard.badge.waveform",
-                           accessibilityDescription: "Chatput")
-                ?? NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Chatput")
+                           accessibilityDescription: "ChatPUT")
+                ?? NSImage(systemSymbolName: "keyboard", accessibilityDescription: "ChatPUT")
             image?.isTemplate = true
             button.image = image
             button.action = #selector(togglePopover(_:))
@@ -86,7 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         popover.performClose(nil)
 
         if let window = settingsWindow {
-            window.title = L.t("聊入 · 设置", "Chatput · Settings")
+            window.title = L.t("ChatPUT · 设置", "ChatPUT · Settings")
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
             return
@@ -99,7 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             })
         )
         let window = NSWindow(contentViewController: host)
-        window.title = L.t("聊入 · 设置", "Chatput · Settings")
+        window.title = L.t("ChatPUT · 设置", "ChatPUT · Settings")
         window.styleMask = [.titled, .closable]
         window.isReleasedWhenClosed = false
         window.center()

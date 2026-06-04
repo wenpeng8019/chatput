@@ -68,7 +68,7 @@ struct MainView: View {
         VStack(alignment: .leading, spacing: connections.hasConnectionContext ? 0 : 8) {
             if connections.hasConnectionContext {
                 HStack(spacing: 12) {
-                    Text("Chatput")
+                    Text("ChatPUT")
                         .font(.system(size: 17, weight: .bold))
                         .foregroundStyle(AppColor.accent)
                     Spacer(minLength: 8)
@@ -77,7 +77,7 @@ struct MainView: View {
                 }
                 .transition(.opacity)
             } else {
-                Text("Chatput")
+                Text("ChatPUT")
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(AppColor.accent)
                 Text("把桌面输入做得更自然")
