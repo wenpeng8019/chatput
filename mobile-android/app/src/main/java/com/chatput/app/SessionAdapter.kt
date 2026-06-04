@@ -5,14 +5,31 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
 import androidx.core.content.ContextCompat
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.card.MaterialCardView
 
 /** 会话列表适配器（IM 会话列表风格） */
 class SessionAdapter(
-    private val items: List<Session>,
+    initial: List<Session>,
     private val onClick: (Session) -> Unit
 ) : RecyclerView.Adapter<SessionAdapter.VH>() {
+
+    // 持有内部快照；通过 submit() 用 DiffUtil 派发逐项增删/位移通知，触发默认动效。
+    private val items: MutableList<Session> = initial.toMutableList()
+    // Session 为可变对象且被原地修改，diff 必须基于提交时刻的字段值快照而非对象引用。
+    private var snapshots: List<Snap> = initial.map { Snap(it) }
+
+    private data class Snap(
+        val connectionId: String,
+        val id: String,
+        val app: String,
+        val title: String,
+        val device: String,
+        val isActive: Boolean
+    ) {
+        constructor(s: Session) : this(s.connectionId, s.id, s.app, s.title, s.device, s.isActive)
+    }
 
     class VH(view: View) : RecyclerView.ViewHolder(view) {
         val card = view as MaterialCardView
@@ -20,6 +37,23 @@ class SessionAdapter(
         val title: TextView = view.findViewById(R.id.session_title)
         val accent: View = view.findViewById(R.id.session_accent)
         val badge: View = view.findViewById(R.id.session_badge)
+    }
+
+    /** 用 DiffUtil 计算差异并派发，使增删/移动/内容变化各自走默认动画。 */
+    fun submit(newList: List<Session>) {
+        val old = snapshots
+        val new = newList.map { Snap(it) }
+        val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+            override fun getOldListSize() = old.size
+            override fun getNewListSize() = new.size
+            override fun areItemsTheSame(o: Int, n: Int): Boolean =
+                old[o].connectionId == new[n].connectionId && old[o].id == new[n].id
+            override fun areContentsTheSame(o: Int, n: Int): Boolean = old[o] == new[n]
+        })
+        items.clear()
+        items.addAll(newList)
+        snapshots = new
+        diff.dispatchUpdatesTo(this)
     }
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {

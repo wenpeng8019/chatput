@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 焦点会话徽标：实心圆点，与 iOS Circle().frame(9×9) 对齐 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="@color/chatput_accent" />
+</shape>

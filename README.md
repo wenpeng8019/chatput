@@ -6,7 +6,7 @@
 ## 架构
 
 ```
-📱 Flutter App ──WebRTC DataChannel──► 💻 Electron 桌面端
+📱 Flutter App ──WebRTC DataChannel──► 💻 原生桌面端 (macOS/Windows)
    - IM 会话 UI                            - 焦点窗口监控
    - 系统语音识别(STT)                       - 文字注入(剪贴板+Cmd/Ctrl+V)
         │                                        │
@@ -24,8 +24,7 @@
 |---|---|---|
 | `signaling-server/` | WebRTC 信令服务器（房间+配对+转发） | Node ✅ 已装 |
 | `desktop-macos/` | 原生 macOS 桌面端（Swift/SwiftUI + WebRTC + AXObserver，主力） | Xcode |
-| `desktop-electron/` | 早期 Electron 桌面端（已被 `desktop-macos` 取代，保留备查） | Node ✅ 已装 |
-| `desktop-windows/` | Windows 桌面端（计划中，占位） | — |
+| `desktop-windows/` | 原生 Windows 桌面端（Rust） | Rust |
 | `mobile-android/` | 原生 Android App（Kotlin + sherpa-onnx 离线语音识别） | Android SDK/JDK |
 | `mobile-iphone/` | iOS 手机端（计划中，占位） | — |
 
@@ -76,8 +75,6 @@ xcodebuild -project ChatputDesktop.xcodeproj -scheme ChatputDesktop \
 open build/Build/Products/Debug/ChatputDesktop.app   # 弹出窗口，显示配对二维码
 ```
 > 首次需在「系统设置 → 隐私与安全性 → 辅助功能」中勾选 ChatputDesktop（焦点监控 + 文字注入都依赖）。
->
-> 旧 Electron 版仍可用：`cd desktop-electron && npm install && npm start`。
 
 ### 3) 启动手机端（原生 Android）
 ```bash

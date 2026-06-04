@@ -82,6 +82,8 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
             reverseLayout = true
         }
         binding.list.adapter = adapter
+        // 自定义增删动效：弹性缩放，观感对齐 iOS。
+        binding.list.itemAnimator = SpringItemAnimator()
         bindHeaderScrollBehavior()
         // 反向列表首次排版、会话增减、窗口尺寸变化时，都要重新计算 header 是否已被会话顶到。
         binding.list.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
@@ -148,7 +150,7 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
     private fun refresh() {
         if (!ConnectionManager.isConnecting) reconnectingPayload = null
         val showSessionShell = ConnectionManager.hasConnectionContext
-        adapter.notifyDataSetChanged()
+        adapter.submit(ConnectionManager.sessions.toList())
         binding.empty.visibility =
             if (ConnectionManager.sessions.isEmpty()) View.VISIBLE else View.GONE
         binding.empty.text = if (showSessionShell) {

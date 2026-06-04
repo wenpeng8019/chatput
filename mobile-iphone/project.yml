@@ -1,0 +1,45 @@
+name: ChatputPhone
+options:
+  bundleIdPrefix: com.chatput
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  ChatputPhone:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: Chatput
+        CFBundleName: Chatput
+        UILaunchScreen: {}
+        NSCameraUsageDescription: "聊入需要使用摄像头扫描桌面端二维码。"
+        NSMicrophoneUsageDescription: "聊入需要使用麦克风识别你的语音输入。"
+        NSSpeechRecognitionUsageDescription: "聊入需要语音识别权限把语音转换成文字。"
+        NSLocalNetworkUsageDescription: "聊入需要访问局域网中的桌面端信令服务。"
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+    dependencies:
+      - framework: ../desktop-macos/Frameworks/WebRTC.xcframework
+        embed: true
+    settings:
+      base:
+        PRODUCT_NAME: Chatput
+        LD_RUNPATH_SEARCH_PATHS:
+          - "$(inherited)"
+          - "@executable_path/Frameworks"
+        FRAMEWORK_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PROJECT_DIR)/../desktop-macos/Frameworks"

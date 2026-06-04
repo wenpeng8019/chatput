@@ -49,7 +49,7 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         private const val CURSOR_STEP_DP = 24f         // 水平棘轮步长：每拖动这么远移动一个字符
         private const val CURSOR_SWIPE_TRIGGER_DP = 32f // 上下需继续划出这段距离，松手后才切一行
         private const val CURSOR_VERTICAL_BIAS = 1.8f  // 垂直需明显大于水平才锁定上下行，避免误触发换行
-        private const val CURSOR_CONTINUOUS_DP = 96f   // 超过此偏移（约到按钮位置）才进入连续移动
+        private const val CURSOR_CONTINUOUS_DP = 96f   // 连续移动阈值的回退默认值；运行时按「麦克风中心→侧按钮中心」的实际距离重算（见 cursorContinuousPx）
         private const val CURSOR_REPEAT_MAX_MS = 200L  // 连续移动最慢速度
         private const val CURSOR_REPEAT_MIN_MS = 40L   // 连续移动最快速度
 
@@ -79,23 +79,32 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
     private var gestureStartY = 0f
     private var inCursorMode = false
     private var cursorVertical = false   // true=垂直（上下行），false=水平（左右字）
-    private var cursorDelta = 0f         // 锁定轴上相对起点的偏移（px）
+    private var cursorContinuous = false // 是否处于连续触发（驱动方向提示的点裂变 + chevron 外移）
+    private var cursorDelta = 0f         // 锁定轴上相对起点的偏移（px，棘轮逐字用，进入光标模式后重定基线）
+    private var cursorOriginX = 0f       // 麦克风中心的屏幕 X（连续触发判定的绝对基准，不重定基线）
+    private var cursorAbsX = 0f          // 当前手指的屏幕 X
     private var lastStepIndex = 0        // 已经发出的离散步数（含正负）
     private var cursorRepeating = false
     private var talkDownAt = 0L
     private var talkMode = SpeechHelper.Mode.DEFAULT
+    private var isTalkingActive = false  // 正在录音（驱动方向提示整体淡出）
     private var lastTalkTapUpAt = 0L
     private var lastTalkTapX = 0f
     private var lastTalkTapY = 0f
     private val cursorRepeatRunnable = object : Runnable {
         override fun run() {
             if (!inCursorMode) return
-            if (kotlin.math.abs(cursorDelta) >= CURSOR_CONTINUOUS_DP.dpF) {
-                sendAction(cursorActionFor(cursorDelta > 0))
+            val cont = cursorContinuousDelta()
+            if (kotlin.math.abs(cont) >= cursorContinuousPx()) {
+                sendAction(cursorActionFor(cont > 0))
                 v_haptic()
                 mainHandler.postDelayed(this, cursorRepeatInterval())
             } else {
                 cursorRepeating = false
+                if (cursorContinuous) {
+                    cursorContinuous = false
+                    refreshDirectionHints()
+                }
             }
         }
     }
@@ -178,12 +187,15 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
                     talkMode = if (isDoubleTap) SpeechHelper.Mode.ENGLISH else SpeechHelper.Mode.DEFAULT
                     inCursorMode = false
                     cursorDelta = 0f
+                    cursorOriginX = talkCenterX()   // 连续触发的绝对基准：麦克风中心
+                    cursorAbsX = event.rawX
                     lastStepIndex = 0
                     cursorRepeating = false
                     startTalking(v, talkMode)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    cursorAbsX = event.rawX
                     if (!inCursorMode) {
                         val dx = event.rawX - gestureStartX
                         val dy = event.rawY - gestureStartY
@@ -234,14 +246,27 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         }
     }
 
+    /** 同步方向提示装饰到当前状态。 */
+    private fun refreshDirectionHints() {
+        binding.directionHints.setState(
+            talking = isTalkingActive,
+            cursorMode = inCursorMode,
+            vertical = cursorVertical,
+            continuous = cursorContinuous
+        )
+    }
+
     /** 从说话切换到光标控制：丢弃录音，进入拖动模式（不震动，交给逐字步进）。 */
     private fun enterCursorMode() {
         mainHandler.removeCallbacks(hintResetRunnable)
         inCursorMode = true
         lastStepIndex = 0
         cursorRepeating = false
+        cursorContinuous = false
+        isTalkingActive = false
         speech.cancel()
         setOrbActive(false)
+        refreshDirectionHints()
         binding.hint.text = if (cursorVertical) "↑ 上滑松手切行 ↓" else "← 拖动移动光标 →"
     }
 
@@ -271,14 +296,22 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
             lastStepIndex = stepIndex
         }
 
-        if (kotlin.math.abs(delta) >= CURSOR_CONTINUOUS_DP.dpF) {
+        if (kotlin.math.abs(cursorContinuousDelta()) >= cursorContinuousPx()) {
             if (!cursorRepeating) {
                 cursorRepeating = true
                 mainHandler.postDelayed(cursorRepeatRunnable, cursorRepeatInterval())
             }
+            if (!cursorContinuous) {
+                cursorContinuous = true
+                refreshDirectionHints()
+            }
         } else {
             cursorRepeating = false
             mainHandler.removeCallbacks(cursorRepeatRunnable)
+            if (cursorContinuous) {
+                cursorContinuous = false
+                refreshDirectionHints()
+            }
         }
     }
 
@@ -295,11 +328,37 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
 
     /** 连续移动间隔：偏移越过连续阈值后越远越快。 */
     private fun cursorRepeatInterval(): Long {
-        val travel = kotlin.math.abs(cursorDelta)
-        val start = CURSOR_CONTINUOUS_DP.dpF
+        val travel = kotlin.math.abs(cursorContinuousDelta())
+        val start = cursorContinuousPx()
         val full = start + CURSOR_STEP_DP.dpF * 8f
         val t = ((travel - start) / (full - start)).coerceIn(0f, 1f)
         return (CURSOR_REPEAT_MAX_MS - (CURSOR_REPEAT_MAX_MS - CURSOR_REPEAT_MIN_MS) * t).toLong()
+    }
+
+    /**
+     * 连续触发的绝对偏移：以麦克风中心为基准（不随进入光标模式重定基线），
+     * 确保「滑到侧按钮中心」才切连续，而不是多偏移一个激活距离。
+     */
+    private fun cursorContinuousDelta(): Float = cursorAbsX - cursorOriginX
+
+    /** 麦克风按钮中心的屏幕 X。 */
+    private fun talkCenterX(): Float {
+        val loc = IntArray(2)
+        binding.btnTalk.getLocationOnScreen(loc)
+        return loc[0] + binding.btnTalk.width / 2f
+    }
+
+    /**
+     * 连续光标移动的触发阈值：麦克风中心 → 侧按钮（退格）中心的水平距离，
+     * 根据按钮实际布局位置计算，随设备宽度自适应。布局未就绪时回退到默认值。
+     */
+    private fun cursorContinuousPx(): Float {
+        val talk = binding.btnTalk
+        val side = binding.btnBackspace
+        if (talk.width == 0 || side.width == 0) return CURSOR_CONTINUOUS_DP.dpF
+        val talkCenter = talk.x + talk.width / 2f
+        val sideCenter = side.x + side.width / 2f
+        return kotlin.math.abs(talkCenter - sideCenter)
     }
 
     private fun endCursorMode(v: View) {
@@ -310,8 +369,10 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         }
         inCursorMode = false
         cursorRepeating = false
+        cursorContinuous = false
         cursorDelta = 0f
         mainHandler.removeCallbacks(cursorRepeatRunnable)
+        refreshDirectionHints()
         v.isPressed = false
         binding.hint.text = currentIdleHint()
     }
@@ -432,7 +493,7 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         } else {
             resources.displayMetrics.widthPixels / 2f
         }
-        return kotlin.math.abs(rawX - centerX) <= 52f.dpF
+        return kotlin.math.abs(rawX - centerX) <= 70f.dpF
     }
 
     /** 拖拽过程中：语音交互框随手指被"拉高"并渐出（progress 0→1）。 */
@@ -581,6 +642,8 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         }
         v.isPressed = true
         setOrbActive(true)
+        isTalkingActive = true
+        refreshDirectionHints()
         binding.hint.text = if (mode == SpeechHelper.Mode.ENGLISH) HINT_ENGLISH else "正在听…"
         speech.start(object : SpeechHelper.Callback {
             override fun onPartial(text: String) {
@@ -607,6 +670,8 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         mainHandler.removeCallbacks(hintResetRunnable)
         v.isPressed = false
         setOrbActive(false)
+        isTalkingActive = false
+        refreshDirectionHints()
         speech.stop()
     }
 
@@ -614,6 +679,8 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         mainHandler.removeCallbacks(hintResetRunnable)
         v.isPressed = false
         setOrbActive(false)
+        isTalkingActive = false
+        refreshDirectionHints()
         speech.cancel()
     }
 

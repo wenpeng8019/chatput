@@ -191,7 +191,7 @@
         android:id="@+id/drag_handle"
         android:layout_width="match_parent"
         android:layout_height="0dp"
-        android:layout_marginTop="-22dp"
+        android:layout_marginTop="-10dp"
         android:clickable="true"
         android:focusable="true"
         android:contentDescription="向上拖拽，呼出文字输入"
@@ -237,6 +237,17 @@
                 app:layout_constraintStart_toStartOf="@id/btn_talk"
                 app:layout_constraintTop_toTopOf="@id/btn_talk" />
 
+            <com.chatput.app.DirectionHintsView
+                android:id="@+id/direction_hints"
+                android:layout_width="140dp"
+                android:layout_height="120dp"
+                android:clickable="false"
+                android:focusable="false"
+                app:layout_constraintBottom_toBottomOf="@id/btn_talk"
+                app:layout_constraintEnd_toEndOf="@id/btn_talk"
+                app:layout_constraintStart_toStartOf="@id/btn_talk"
+                app:layout_constraintTop_toTopOf="@id/btn_talk" />
+
             <FrameLayout
                 android:id="@+id/btn_talk"
                 android:layout_width="@dimen/control_primary"
@@ -251,13 +262,12 @@
                 app:layout_constraintTop_toTopOf="parent">
 
                 <ImageView
-                    android:layout_width="32dp"
-                    android:layout_height="32dp"
+                    android:layout_width="34dp"
+                    android:layout_height="34dp"
                     android:layout_gravity="center"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_mic"
                     app:tint="@color/chatput_on_accent" />
-
             </FrameLayout>
 
             <FrameLayout
@@ -272,12 +282,11 @@
                 android:focusable="true"
                 app:layout_constraintBottom_toBottomOf="@id/btn_talk"
                 app:layout_constraintStart_toStartOf="parent"
-                app:layout_constraintEnd_toStartOf="@id/btn_talk"
                 app:layout_constraintTop_toTopOf="@id/btn_talk">
 
                 <ImageView
-                    android:layout_width="23dp"
-                    android:layout_height="23dp"
+                    android:layout_width="27dp"
+                    android:layout_height="27dp"
                     android:layout_gravity="center"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_nav_backspace"
@@ -308,13 +317,12 @@
                 android:contentDescription="短按换行，长按回车"
                 android:focusable="true"
                 app:layout_constraintBottom_toBottomOf="@id/btn_talk"
-                app:layout_constraintStart_toEndOf="@id/btn_talk"
                 app:layout_constraintEnd_toEndOf="parent"
                 app:layout_constraintTop_toTopOf="@id/btn_talk">
 
                 <ImageView
-                    android:layout_width="23dp"
-                    android:layout_height="23dp"
+                    android:layout_width="27dp"
+                    android:layout_height="27dp"
                     android:layout_gravity="center"
                     android:contentDescription="@null"
                     android:src="@drawable/ic_nav_enter"
