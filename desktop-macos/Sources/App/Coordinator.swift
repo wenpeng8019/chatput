@@ -15,6 +15,7 @@ final class Coordinator {
     private lazy var server = SignalingServer()
     private let focus = FocusMonitor()
     private let injector = TextInjector()
+    private let windowCapturer = WindowCapturer()
 
     private var roomId = ""
     private var token = ""
@@ -28,6 +29,10 @@ final class Coordinator {
     private var networkChangeWorkItem: DispatchWorkItem?
     private var shouldPromptRescanAfterRefresh = false
 
+    // 远程窗口画面（2.0）：当前正在采集的会话与上次下发的生效视口（用于节流 meta）。
+    private var screenSessionId = ""
+    private var lastAppliedViewport = CGRect.zero
+
     private var transport: TransportMode { settings.transport }
 
     func start() {
@@ -35,6 +40,7 @@ final class Coordinator {
         wireServer()
         wireWebRTC()
         wireFocus()
+        wireScreen()
         startAccessibilityPolling()
         startNetworkMonitoring()
 
@@ -75,6 +81,7 @@ final class Coordinator {
         started = false
         reconnectWorkItem?.cancel()
         reconnectWorkItem = nil
+        stopScreenCapture(sessionId: "")
         signaling.close()
         webrtc.close()
         server.stop()
@@ -122,6 +129,7 @@ final class Coordinator {
     private func restart() {
         reconnectWorkItem?.cancel()
         networkChangeWorkItem?.cancel()
+        stopScreenCapture(sessionId: "")
         signaling.close()
         webrtc.close()
         server.stop()
@@ -303,6 +311,7 @@ final class Coordinator {
 
         case Wire.Signal.peerLeft:
             state.log("peer left")
+            stopScreenCapture(sessionId: "")
             state.setConnectedDevice("")
             state.setStatus(zh: "手机已断开，等待重连…", en: "Phone disconnected, waiting to reconnect…", connected: false)
 
@@ -344,6 +353,77 @@ final class Coordinator {
         webrtc.onLog = { [weak self] line in
             self?.state.log(line)
         }
+    }
+
+    // MARK: - 远程窗口画面（2.0）
+
+    /// 把采集器的输出接到 WebRTC，并响应手机的开始/停止/视口控制。
+    private func wireScreen() {
+        windowCapturer.onLog = { [weak self] line in self?.state.log("[screen]", line) }
+        windowCapturer.onFrame = { [weak self] pixelBuffer, ts in
+            self?.webrtc.pushVideoFrame(pixelBuffer, timeStampNs: ts)
+        }
+        windowCapturer.onThumbnail = { [weak self] jpeg in
+            guard let self = self, !self.screenSessionId.isEmpty else { return }
+            self.webrtc.sendBinary(self.screenThumbFrame(sessionId: self.screenSessionId, jpeg: jpeg))
+        }
+        windowCapturer.onMeta = { [weak self] winW, winH, applied in
+            guard let self = self, !self.screenSessionId.isEmpty else { return }
+            // 仅当生效视口变化时才下发 meta，避免每帧刷 JSON。
+            guard applied != self.lastAppliedViewport else { return }
+            self.lastAppliedViewport = applied
+            self.webrtc.sendMessage([
+                Wire.Key.type: Wire.Msg.screenMeta,
+                "sessionId": self.screenSessionId,
+                "win": ["w": winW, "h": winH, "scale": Double(self.windowCapturer.backingScale)],
+                "applied": [
+                    "x": Int(applied.origin.x), "y": Int(applied.origin.y),
+                    "w": Int(applied.width), "h": Int(applied.height),
+                ],
+            ])
+        }
+
+        webrtc.onScreenStart = { [weak self] sessionId, w, h in
+            self?.startScreenCapture(sessionId: sessionId, viewportW: w, viewportH: h)
+        }
+        webrtc.onScreenStop = { [weak self] sessionId in
+            self?.stopScreenCapture(sessionId: sessionId)
+        }
+        webrtc.onViewport = { [weak self] sessionId, x, y, w, h in
+            guard let self = self, sessionId == self.screenSessionId else { return }
+            self.windowCapturer.setViewport(x: x, y: y, w: w, h: h)
+        }
+    }
+
+    private func startScreenCapture(sessionId: String, viewportW: Int, viewportH: Int) {
+        guard let session = state.sessions.first(where: { $0.id == sessionId }) else {
+            state.log("[screen] 未找到会话:", sessionId)
+            return
+        }
+        screenSessionId = sessionId
+        lastAppliedViewport = .zero
+        state.log("[screen] start:", session.app, "-", session.title)
+        windowCapturer.start(sessionId: sessionId, app: session.app, title: session.title,
+                             viewportW: viewportW, viewportH: viewportH)
+    }
+
+    private func stopScreenCapture(sessionId: String) {
+        guard sessionId.isEmpty || sessionId == screenSessionId else { return }
+        state.log("[screen] stop")
+        windowCapturer.stop()
+        screenSessionId = ""
+        lastAppliedViewport = .zero
+    }
+
+    /// 缩略图二进制帧：`[2 字节大端 sessionId 长度][sessionId UTF-8][JPEG]`。
+    private func screenThumbFrame(sessionId: String, jpeg: Data) -> Data {
+        var data = Data()
+        let idBytes = Array(sessionId.utf8)
+        var len = UInt16(idBytes.count).bigEndian
+        withUnsafeBytes(of: &len) { data.append(contentsOf: $0) }
+        data.append(contentsOf: idBytes)
+        data.append(jpeg)
+        return data
     }
 
     // MARK: - 焦点监控

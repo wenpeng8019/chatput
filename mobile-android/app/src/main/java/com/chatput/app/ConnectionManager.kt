@@ -114,6 +114,24 @@ object ConnectionManager {
         connections[session.connectionId]?.sendAction(session, action)
     }
 
+    // 远程窗口画面（2.0）
+
+    fun startScreen(session: Session, viewportW: Int, viewportH: Int) {
+        connections[session.connectionId]?.startScreen(session, viewportW, viewportH)
+    }
+
+    fun stopScreen(session: Session) {
+        connections[session.connectionId]?.stopScreen(session)
+    }
+
+    fun sendViewport(session: Session, x: Int, y: Int, w: Int, h: Int) {
+        connections[session.connectionId]?.sendViewport(session, x, y, w, h)
+    }
+
+    fun setScreenListener(connectionId: String, listener: ScreenListener?) {
+        connections[connectionId]?.screenListener = listener
+    }
+
     fun disconnect(connectionId: String? = null) {
         if (connectionId == null) {
             val allIds = connections.keys.toList()

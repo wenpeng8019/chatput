@@ -15,6 +15,12 @@ final class WebRTCManager: NSObject {
     var onAction: ((String) -> Void)?
     /// 收到手机上报的设备名。
     var onDevice: ((String) -> Void)?
+    /// 手机请求开始采集某会话窗口（sessionId, 期望视口宽, 高）。
+    var onScreenStart: ((String, Int, Int) -> Void)?
+    /// 手机请求停止采集某会话窗口（sessionId）。
+    var onScreenStop: ((String) -> Void)?
+    /// 手机拖动视口（sessionId, x, y, w, h，窗口像素系）。
+    var onViewport: ((String, Int, Int, Int, Int) -> Void)?
     var onLog: ((String) -> Void)?
 
     private static let factory: RTCPeerConnectionFactory = {
@@ -26,6 +32,13 @@ final class WebRTCManager: NSObject {
 
     private var pc: RTCPeerConnection?
     private var channel: RTCDataChannel?
+
+    // 远程窗口画面（2.0）：预协商一条 sendonly 视频轨，开启采集时才喂帧。
+    private var videoSource: RTCVideoSource?
+    private var videoTrack: RTCVideoTrack?
+    private var videoCapturer: RTCVideoCapturer?
+    private var lastAdaptW: Int32 = 0
+    private var lastAdaptH: Int32 = 0
 
     private let iceServers = [RTCIceServer(urlStrings: ["stun:stun.l.google.com:19302"])]
 
@@ -51,6 +64,17 @@ final class WebRTCManager: NSObject {
             dc.delegate = self
             self.channel = dc
         }
+
+        // 预协商一条 sendonly 视频轨：开启远程画面前轨道静默，避免中途重协商。
+        let source = WebRTCManager.factory.videoSource()
+        let track = WebRTCManager.factory.videoTrack(with: source, trackId: "screen0")
+        self.videoSource = source
+        self.videoTrack = track
+        self.videoCapturer = RTCVideoCapturer(delegate: source)
+        let txInit = RTCRtpTransceiverInit()
+        txInit.direction = .sendOnly
+        txInit.streamIds = ["screen"]
+        pc.addTransceiver(with: track, init: txInit)
 
         pc.offer(for: constraints) { [weak self] sdp, error in
             guard let self = self, let sdp = sdp else {
@@ -120,10 +144,50 @@ final class WebRTCManager: NSObject {
         channel.sendData(RTCDataBuffer(data: data, isBinary: false))
     }
 
+    /// 经 DataChannel 发送二进制帧（用于小地图缩略图）。
+    func sendBinary(_ data: Data) {
+        guard let channel = channel, channel.readyState == .open else { return }
+        channel.sendData(RTCDataBuffer(data: data, isBinary: true))
+    }
+
+    /// 把一帧采集到的窗口子区域画面喂入预协商的视频轨。
+    func pushVideoFrame(_ pixelBuffer: CVPixelBuffer, timeStampNs: Int64) {
+        guard let source = videoSource, let capturer = videoCapturer else { return }
+        let w = Int32(CVPixelBufferGetWidth(pixelBuffer))
+        let h = Int32(CVPixelBufferGetHeight(pixelBuffer))
+        // 锁定输出格式为采集分辨率，禁止 WebRTC 自适应降采样（否则画面发虚）。
+        if w != lastAdaptW || h != lastAdaptH {
+            lastAdaptW = w; lastAdaptH = h
+            source.adaptOutputFormat(toWidth: w, height: h, fps: 30)
+            raiseVideoBitrate()
+        }
+        let rtcBuffer = RTCCVPixelBuffer(pixelBuffer: pixelBuffer)
+        let frame = RTCVideoFrame(buffer: rtcBuffer, rotation: ._0, timeStampNs: timeStampNs)
+        source.capturer(capturer, didCapture: frame)
+    }
+
+    /// 抬高视频发送码率上限，避免文字画面被压糊。
+    private func raiseVideoBitrate() {
+        guard let pc = pc else { return }
+        guard let sender = pc.senders.first(where: { $0.track?.kind == "video" }) else { return }
+        let params = sender.parameters
+        for encoding in params.encodings {
+            encoding.maxBitrateBps = NSNumber(value: 8_000_000)   // 8 Mbps
+            encoding.minBitrateBps = NSNumber(value: 1_500_000)
+            encoding.maxFramerate = NSNumber(value: 30)
+        }
+        sender.parameters = params
+    }
+
     /// 关闭当前连接与通道（重连/切换配置时调用）。
     func close() {
         channel?.close()
         channel = nil
+        videoTrack = nil
+        videoSource = nil
+        videoCapturer = nil
+        lastAdaptW = 0
+        lastAdaptH = 0
         pc?.close()
         pc = nil
     }
@@ -183,6 +247,21 @@ extension WebRTCManager: RTCDataChannelDelegate {
             if let action = obj["action"] as? String { onAction?(action) }
         case Wire.Msg.hello:
             if let device = obj["device"] as? String { onDevice?(device) }
+        case Wire.Msg.screenStart:
+            let sessionId = obj["sessionId"] as? String ?? ""
+            let vp = obj["viewport"] as? [String: Any]
+            let w = (vp?["w"] as? NSNumber)?.intValue ?? 0
+            let h = (vp?["h"] as? NSNumber)?.intValue ?? 0
+            onScreenStart?(sessionId, w, h)
+        case Wire.Msg.screenStop:
+            onScreenStop?(obj["sessionId"] as? String ?? "")
+        case Wire.Msg.viewport:
+            let sessionId = obj["sessionId"] as? String ?? ""
+            let x = (obj["x"] as? NSNumber)?.intValue ?? 0
+            let y = (obj["y"] as? NSNumber)?.intValue ?? 0
+            let w = (obj["w"] as? NSNumber)?.intValue ?? 0
+            let h = (obj["h"] as? NSNumber)?.intValue ?? 0
+            onViewport?(sessionId, x, y, w, h)
         default:
             break
         }

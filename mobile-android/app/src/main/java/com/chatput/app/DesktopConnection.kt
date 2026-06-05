@@ -9,10 +9,19 @@ import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
+import org.webrtc.RtpReceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
+import org.webrtc.VideoTrack
 import java.nio.ByteBuffer
 import java.nio.charset.StandardCharsets
+
+/** 远程窗口画面（2.0）的回调出口：把视频轨/缩略图/视口元数据交给上层 UI。 */
+interface ScreenListener {
+    fun onVideoTrack(track: VideoTrack)
+    fun onThumbnail(sessionId: String, jpeg: ByteArray)
+    fun onMeta(sessionId: String, winW: Int, winH: Int, scale: Float, x: Int, y: Int, w: Int, h: Int)
+}
 
 internal class DesktopConnection(
     val connectionId: String,
@@ -37,8 +46,22 @@ internal class DesktopConnection(
         }
     }
 
+    /** 远程窗口画面（2.0）的回调出口：把视频轨/缩略图/视口元数据交给上层 UI。 */
+    var screenListener: ScreenListener? = null
+        set(value) {
+            field = value
+            // 注册时若视频轨已就绪，立即补发，避免 UI 漏接。
+            remoteVideoTrack?.let { value?.onVideoTrack(it) }
+        }
+
+    private var remoteVideoTrack: VideoTrack? = null
+
     companion object {
         private var factory: PeerConnectionFactory? = null
+        private var sharedEglBase: org.webrtc.EglBase? = null
+
+        /** 渲染器需要与解码器共享同一 EGL 上下文。 */
+        fun eglBaseContext(): org.webrtc.EglBase.Context? = sharedEglBase?.eglBaseContext
 
         private fun ensureFactory(context: Context): PeerConnectionFactory {
             if (factory == null) {
@@ -47,6 +70,7 @@ internal class DesktopConnection(
                         .createInitializationOptions()
                 )
                 val eglBase = org.webrtc.EglBase.create()
+                sharedEglBase = eglBase
                 factory = PeerConnectionFactory.builder()
                     .setVideoEncoderFactory(DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true))
                     .setVideoDecoderFactory(DefaultVideoDecoderFactory(eglBase.eglBaseContext))
@@ -137,6 +161,37 @@ internal class DesktopConnection(
             .put("type", "action")
             .put("action", action)
             .put("sessionId", session.id)
+        sendJson(json)
+    }
+
+    // MARK: 远程窗口画面（2.0）
+
+    /** 请求桌面端开始采集某会话窗口，并告知手机视口像素尺寸。 */
+    fun startScreen(session: Session, viewportW: Int, viewportH: Int) {
+        if (!isConnected) return
+        val json = JSONObject()
+            .put("type", "screen-start")
+            .put("sessionId", session.id)
+            .put("viewport", JSONObject().put("w", viewportW).put("h", viewportH))
+        sendJson(json)
+    }
+
+    /** 通知桌面端停止采集。 */
+    fun stopScreen(session: Session) {
+        if (!isConnected) return
+        val json = JSONObject()
+            .put("type", "screen-stop")
+            .put("sessionId", session.id)
+        sendJson(json)
+    }
+
+    /** 拖动手机视口时上报采集区域（窗口像素坐标）。 */
+    fun sendViewport(session: Session, x: Int, y: Int, w: Int, h: Int) {
+        if (!isConnected) return
+        val json = JSONObject()
+            .put("type", "viewport")
+            .put("sessionId", session.id)
+            .put("x", x).put("y", y).put("w", w).put("h", h)
         sendJson(json)
     }
 
@@ -257,6 +312,14 @@ internal class DesktopConnection(
                 this@DesktopConnection.dataChannel = dataChannel
                 wireChannel(dataChannel)
             }
+
+            override fun onAddTrack(receiver: RtpReceiver, streams: Array<out org.webrtc.MediaStream>?) {
+                val track = receiver.track()
+                if (track is VideoTrack) {
+                    remoteVideoTrack = track
+                    screenListener?.onVideoTrack(track)
+                }
+            }
         })
     }
 
@@ -294,8 +357,11 @@ internal class DesktopConnection(
             override fun onMessage(buffer: DataChannel.Buffer) {
                 val bytes = ByteArray(buffer.data.remaining())
                 buffer.data.get(bytes)
-                val text = String(bytes, StandardCharsets.UTF_8)
-                handlePeerMessage(JSONObject(text))
+                if (buffer.binary) {
+                    handleBinaryFrame(bytes)
+                } else {
+                    handlePeerMessage(JSONObject(String(bytes, StandardCharsets.UTF_8)))
+                }
             }
         })
     }
@@ -332,7 +398,33 @@ internal class DesktopConnection(
         when (msg.optString("type")) {
             "session" -> upsertSession(msg)
             "session-closed" -> removeSession(msg.optString("sessionId"))
+            "screen-meta" -> handleScreenMeta(msg)
         }
+    }
+
+    private fun handleScreenMeta(msg: JSONObject) {
+        val listener = screenListener ?: return
+        val sessionId = msg.optString("sessionId")
+        val win = msg.optJSONObject("win") ?: return
+        val applied = msg.optJSONObject("applied") ?: return
+        listener.onMeta(
+            sessionId,
+            win.optInt("w"), win.optInt("h"),
+            win.optDouble("scale", 2.0).toFloat(),
+            applied.optInt("x"), applied.optInt("y"),
+            applied.optInt("w"), applied.optInt("h")
+        )
+    }
+
+    /** 缩略图二进制帧：`[2 字节大端 sessionId 长度][sessionId UTF-8][JPEG]`。 */
+    private fun handleBinaryFrame(bytes: ByteArray) {
+        val listener = screenListener ?: return
+        if (bytes.size < 2) return
+        val idLen = ((bytes[0].toInt() and 0xFF) shl 8) or (bytes[1].toInt() and 0xFF)
+        if (idLen < 0 || 2 + idLen > bytes.size) return
+        val sessionId = String(bytes, 2, idLen, StandardCharsets.UTF_8)
+        val jpeg = bytes.copyOfRange(2 + idLen, bytes.size)
+        listener.onThumbnail(sessionId, jpeg)
     }
 
     private fun upsertSession(msg: JSONObject) {
@@ -406,6 +498,7 @@ internal class DesktopConnection(
         dataChannel = null
         pc = null
         signaling = null
+        remoteVideoTrack = null
         isConnecting = false
 
         try {
@@ -449,5 +542,6 @@ open class SimplePcObserver : PeerConnection.Observer {
     override fun onRemoveStream(stream: org.webrtc.MediaStream?) {}
     override fun onDataChannel(dataChannel: DataChannel) {}
     override fun onRenegotiationNeeded() {}
+    override fun onAddTrack(receiver: RtpReceiver, streams: Array<out org.webrtc.MediaStream>?) {}
     override fun onConnectionChange(newState: PeerConnection.PeerConnectionState) {}
 }

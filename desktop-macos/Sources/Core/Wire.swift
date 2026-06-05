@@ -28,6 +28,19 @@ enum Wire {
         static let action = "action"
         /// 手机 → 桌面：上报设备名。
         static let hello = "hello"
+
+        // MARK: 远程窗口画面（2.0）
+
+        /// 手机 → 桌面：请求开始采集某会话窗口；附期望视口像素尺寸 `viewport:{w,h}`。
+        static let screenStart = "screen-start"
+        /// 手机 → 桌面：停止采集该会话窗口。
+        static let screenStop = "screen-stop"
+        /// 手机 → 桌面：拖动平移视口（窗口像素系），节流发送 `{x,y,w,h}`。
+        static let viewport = "viewport"
+        /// 桌面 → 手机：窗口尺寸与实际生效视口，用于红框/clamp 校正。
+        static let screenMeta = "screen-meta"
+        /// 桌面 → 手机：周期性小地图缩略图（二进制帧：header + JPEG）。
+        static let screenThumb = "screen-thumb"
     }
 
     /// 信令服务器协议（客户端 ⇄ 信令服务器）。

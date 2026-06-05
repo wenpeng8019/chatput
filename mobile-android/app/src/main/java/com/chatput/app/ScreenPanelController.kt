@@ -1,0 +1,230 @@
+package com.chatput.app
+
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import android.view.MotionEvent
+import android.view.View
+import android.widget.TextView
+import org.webrtc.EglBase
+import org.webrtc.RendererCommon
+import org.webrtc.SurfaceViewRenderer
+import org.webrtc.VideoTrack
+
+/**
+ * 远程窗口画面面板的可复用控制器。
+ *
+ * 把原 ScreenViewActivity 的全部逻辑（视口计算、主画面拖动、缩略图/元数据、
+ * 视口节流下发、采集启停）抽离，供 ChatActivity 的「下拉幕布」面板内嵌使用。
+ *
+ * 生命周期：[bind] 绑定会话 → 幕布下拉时 [start] 开始采集 → 收起时 [stop] 停止 →
+ * 页面销毁时 [release] 释放渲染器。start/stop 可反复调用。
+ */
+class ScreenPanelController(
+    private val renderer: SurfaceViewRenderer,
+    private val minimap: MinimapView,
+    private val statusLabel: TextView,
+    private val cover: View,
+) : ScreenListener {
+
+    companion object {
+        private const val VIEWPORT_SEND_INTERVAL_MS = 33L // ~30/s
+        private const val TAG = "chatput-screen"
+    }
+
+    private val main = Handler(Looper.getMainLooper())
+    private var session: Session? = null
+    private var connectionId: String = ""
+
+    private var boundTrack: VideoTrack? = null
+    private var started = false
+    private var released = false
+
+    // 视口（窗口像素系）。winW/winH 来自桌面 screen-meta。
+    private var winW = 0
+    private var winH = 0
+    private var winScale = 2f
+    private var vpX = 0
+    private var vpY = 0
+    private var vpW = 0
+    private var vpH = 0
+    private var viewportInited = false
+
+    // 主画面拖动状态
+    private var dragLastX = 0f
+    private var dragLastY = 0f
+
+    private var lastViewportSentAt = 0L
+    private val flushViewport = Runnable { sendViewportNow() }
+
+    /** 初始化渲染器与交互。仅需调用一次。 */
+    fun init(eglContext: EglBase.Context?) {
+        renderer.init(eglContext, null)
+        renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+        renderer.setEnableHardwareScaler(true)
+        minimap.onViewportMove = { x, y -> moveViewportTo(x, y) }
+        setupRendererDrag()
+    }
+
+    /** 绑定到某个会话（不开始采集）。 */
+    fun bind(connectionId: String, session: Session?) {
+        this.connectionId = connectionId
+        this.session = session
+    }
+
+    val hasSession: Boolean get() = session != null
+
+    /** 开始采集（幕布下拉到位时调用）。可重复调用。 */
+    fun start() {
+        if (started || released || session == null) return
+        started = true
+        viewportInited = false
+        statusLabel.visibility = View.VISIBLE
+        cover.visibility = View.VISIBLE
+        ConnectionManager.setScreenListener(connectionId, this)
+        renderer.post { startCaptureWhenReady() }
+    }
+
+    /** 停止采集（幕布收起时调用）。 */
+    fun stop() {
+        if (!started) return
+        started = false
+        viewportInited = false
+        cover.visibility = View.VISIBLE
+        main.removeCallbacks(flushViewport)
+        ConnectionManager.setScreenListener(connectionId, null)
+        session?.let { ConnectionManager.stopScreen(it) }
+        boundTrack?.let { runCatching { it.removeSink(renderer) } }
+        boundTrack = null
+    }
+
+    /** 释放渲染器（页面销毁时）。 */
+    fun release() {
+        if (released) return
+        released = true
+        stop()
+        runCatching { renderer.release() }
+    }
+
+    private fun startCaptureWhenReady() {
+        val s = session ?: return
+        if (released || !started) return
+        val w = renderer.width
+        val h = renderer.height
+        if (w <= 0 || h <= 0) {
+            renderer.postDelayed({ startCaptureWhenReady() }, 50)
+            return
+        }
+        // 视口请求 = 渲染区物理像素 ÷ 手机密度，缩小首帧、加速首屏；
+        // 真正视口在首个 meta 后重算下发。
+        val density = renderer.resources.displayMetrics.density.coerceAtLeast(1f)
+        ConnectionManager.startScreen(s, (w / density).toInt().coerceAtLeast(2), (h / density).toInt().coerceAtLeast(2))
+    }
+
+    override fun onVideoTrack(track: VideoTrack) {
+        main.post {
+            if (released) return@post
+            boundTrack?.let { runCatching { it.removeSink(renderer) } }
+            boundTrack = track
+            runCatching { track.addSink(renderer) }
+            statusLabel.visibility = View.GONE
+            cover.visibility = View.GONE
+        }
+    }
+
+    override fun onThumbnail(sessionId: String, jpeg: ByteArray) {
+        if (sessionId != session?.id) return
+        val bmp: Bitmap = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size) ?: return
+        main.post {
+            if (!released) minimap.setThumbnail(bmp)
+        }
+    }
+
+    override fun onMeta(sessionId: String, winW: Int, winH: Int, scale: Float, x: Int, y: Int, w: Int, h: Int) {
+        if (sessionId != session?.id) return
+        main.post {
+            if (released) return@post
+            this.winW = winW
+            this.winH = winH
+            winScale = if (scale > 0f) scale else 2f
+            if (!viewportInited && winW > 0 && winH > 0) {
+                viewportInited = true
+                computeAndSendInitialViewport()
+            }
+            // viewportInited 之后不再用桌面回填的 applied 覆盖本地 vpX/vpY，
+            // 手机为视口唯一权威，避免与拖动乐观更新打架导致抖动。
+            minimap.setMeta(winW, winH, vpX, vpY, vpW, vpH)
+        }
+    }
+
+    /**
+     * 视口尺寸（窗口像素）= 手机渲染区物理像素 ÷ 手机显示密度。
+     * 手机 retina（density≈2），请求较小子区域再上采样填满 → 清晰 1:1、帧更小、延迟更低。
+     */
+    private fun computeAndSendInitialViewport() {
+        val rw = renderer.width
+        val rh = renderer.height
+        if (rw <= 0 || rh <= 0 || winW <= 0 || winH <= 0) return
+        val density = renderer.resources.displayMetrics.density.coerceAtLeast(1f)
+        vpW = (rw / density).toInt().coerceIn(1, winW)
+        vpH = (rh / density).toInt().coerceIn(1, winH)
+        vpX = ((winW - vpW) / 2)
+        vpY = ((winH - vpH) / 2)
+        Log.d(TAG, "initVp renderer=${rw}x${rh} density=$density -> vp=($vpX,$vpY ${vpW}x$vpH) win=${winW}x${winH}")
+        sendViewportNow()
+    }
+
+    /** 把视口左上角移到窗口像素 (x,y)，钳制后节流下发。 */
+    private fun moveViewportTo(x: Int, y: Int) {
+        if (winW <= 0 || winH <= 0 || vpW <= 0 || vpH <= 0) return
+        vpX = x.coerceIn(0, (winW - vpW).coerceAtLeast(0))
+        vpY = y.coerceIn(0, (winH - vpH).coerceAtLeast(0))
+        minimap.setMeta(winW, winH, vpX, vpY, vpW, vpH)
+        queueViewport()
+    }
+
+    /** 主画面拖动：手指拖动量换算成窗口像素，反向移动视口（内容跟手）。 */
+    private fun setupRendererDrag() {
+        renderer.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    dragLastX = event.x; dragLastY = event.y; true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (vpW <= 0 || vpH <= 0 || renderer.width == 0 || renderer.height == 0) return@setOnTouchListener true
+                    // SCALE_ASPECT_FIT 等比显示，两轴共用同一缩放系数（含 retina）。
+                    val dispScale = minOf(
+                        renderer.width.toFloat() / vpW,
+                        renderer.height.toFloat() / vpH
+                    )
+                    val dxWin = (event.x - dragLastX) / dispScale
+                    val dyWin = (event.y - dragLastY) / dispScale
+                    dragLastX = event.x; dragLastY = event.y
+                    moveViewportTo((vpX - dxWin).toInt(), (vpY - dyWin).toInt())
+                    true
+                }
+                else -> true
+            }
+        }
+    }
+
+    private fun queueViewport() {
+        val now = System.currentTimeMillis()
+        val elapsed = now - lastViewportSentAt
+        if (elapsed >= VIEWPORT_SEND_INTERVAL_MS) {
+            sendViewportNow()
+        } else {
+            main.removeCallbacks(flushViewport)
+            main.postDelayed(flushViewport, VIEWPORT_SEND_INTERVAL_MS - elapsed)
+        }
+    }
+
+    private fun sendViewportNow() {
+        val s = session ?: return
+        if (vpW <= 0 || vpH <= 0) return
+        lastViewportSentAt = System.currentTimeMillis()
+        ConnectionManager.sendViewport(s, vpX, vpY, vpW, vpH)
+    }
+}

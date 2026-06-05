@@ -16,6 +16,7 @@ import android.os.Looper
 import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -59,10 +60,12 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
     private lateinit var binding: ActivityChatBinding
     private lateinit var adapter: MessageAdapter
     private lateinit var speech: SpeechHelper
+    private var screenCurtain: ScreenCurtainController? = null
     private val mainHandler = Handler(Looper.getMainLooper())
     private var session: Session? = null
     private var connectionId: String = ""
     private var sessionId: String = ""
+    private var lastInputHeightPx = 0
 
     private var clearAnimator: ValueAnimator? = null
     private var clearCancelled = false
@@ -149,7 +152,9 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         bindEnterButton()
         bindDragHandle()
         bindTextInput()
-        binding.btnHeaderMenu.setOnClickListener { showEnterActions(it, belowAnchor = true) }
+        binding.btnHeaderMenu.setOnClickListener { showHeaderMenu(it) }
+
+        setupScreenCurtain()
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -442,6 +447,7 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
         val pullMax = 96f.dpF
         var startY = 0f
+        var startX = 0f
         var triggered = false
         var blocked = false
         return View.OnTouchListener { _, event ->
@@ -449,6 +455,7 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
                 MotionEvent.ACTION_DOWN -> {
                     blocked = isInTalkButtonSwipeZone(event.rawX)
                     startY = event.rawY
+                    startX = event.rawX
                     triggered = false
                     true
                 }
@@ -473,7 +480,8 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
                     if (!triggered) {
                         val pulled = startY - event.rawY
                         if (pulled < slop) {
-                            showTextInput()           // 轻点直接呼出
+                            // 轻点：仅当落在语音框可视范围内才呼出，避免点到两侧/上方留白触发
+                            if (isWithinComposer(startX, startY)) showTextInput()
                         } else {
                             snapComposerBack()         // 未过阈值，回弹复原
                         }
@@ -494,6 +502,17 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
             resources.displayMetrics.widthPixels / 2f
         }
         return kotlin.math.abs(rawX - centerX) <= 70f.dpF
+    }
+
+    /** 触点是否落在语音框（composer_card）的实际可视范围内。 */
+    private fun isWithinComposer(rawX: Float, rawY: Float): Boolean {
+        val loc = IntArray(2)
+        binding.composerCard.getLocationOnScreen(loc)
+        val left = loc[0]
+        val top = loc[1]
+        val right = left + binding.composerCard.width
+        val bottom = top + binding.composerCard.height
+        return rawX >= left && rawX <= right && rawY >= top && rawY <= bottom
     }
 
     /** 拖拽过程中：语音交互框随手指被"拉高"并渐出（progress 0→1）。 */
@@ -518,6 +537,7 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
     }
 
     private fun bindTextInput() {
+        binding.btnTextMic.setOnClickListener { hideTextInput() }
         binding.btnSend.setOnClickListener { sendTypedText() }
         binding.inputText.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_SEND) {
@@ -525,6 +545,56 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
                 true
             } else {
                 false
+            }
+        }
+        bindTextInputSwipeDown()
+    }
+
+    /**
+     * 文本输入面板下滑手势 — 向下拖动超阈值切回语音面板。
+     * 手势挂在 EditText 自身上，return true 接管事件流才能持续收到 MOVE；
+     * 同时手动调 [View.onTouchEvent] 把事件转发给 EditText，保证打字不受影响。
+     */
+    private fun bindTextInputSwipeDown() {
+        val swipeMin = ViewConfiguration.get(this).scaledTouchSlop.toFloat()
+        var startY = 0f
+        var tracking = false
+        binding.inputText.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    startY = event.rawY
+                    tracking = false
+                    view.onTouchEvent(event)
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (!tracking && event.rawY - startY > swipeMin) {
+                        tracking = true
+                    }
+                    if (tracking) {
+                        true  // 滑动中，不让 EditText 处理
+                    } else {
+                        view.onTouchEvent(event)
+                        true
+                    }
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (tracking && event.rawY - startY > 28f.dpF) {
+                        hideTextInput()
+                        tracking = false
+                        true
+                    } else {
+                        tracking = false
+                        view.onTouchEvent(event)
+                        true
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    tracking = false
+                    view.onTouchEvent(event)
+                    true
+                }
+                else -> { view.onTouchEvent(event); true }
             }
         }
     }
@@ -613,6 +683,13 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
     override fun onResume() {
         super.onResume()
         ConnectionManager.addObserver(this)
+        // 页面恢复时主动检查连接是否仍然有效（断连可能发生在暂停期间）。
+        val currentSession = ConnectionManager.sessionById(connectionId, sessionId)
+        if (currentSession == null || !ConnectionManager.isConnected) {
+            returnToSessionList()
+            return
+        }
+        session = currentSession
     }
 
     override fun onPause() {
@@ -625,6 +702,7 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         mainHandler.removeCallbacksAndMessages(null)
         clearAnimator?.cancel()
         enterAnimator?.cancel()
+        screenCurtain?.release()
         speech.destroy()
     }
 
@@ -780,6 +858,71 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
         } else {
             HINT_DEFAULT
         }
+    }
+
+    /** 顶栏菜单：进入远程窗口画面。 */
+    private fun showHeaderMenu(anchor: View) {
+        anchor.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        val content = layoutInflater.inflate(R.layout.popup_header_actions, binding.root, false)
+        val popup = PopupWindow(
+            content,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            true
+        )
+        popup.isOutsideTouchable = true
+        popup.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+
+        content.findViewById<View>(R.id.action_view_screen).setOnClickListener {
+            popup.dismiss()
+            openScreenView()
+        }
+
+        content.measure(
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+        )
+        val xOffset = anchor.width - content.measuredWidth + 14.dp
+        popup.showAsDropDown(anchor, xOffset, 8.dp)
+    }
+
+    /** 把当前 IME 高度同步给幕布控制器，让其自行计算键盘上推量。 */
+    private fun updateScreenCurtainLift(imeBottom: Int) {
+        val inputH = binding.textInputCard.height.takeIf { it > 0 } ?: lastInputHeightPx
+        if (inputH > 0) lastInputHeightPx = inputH
+        screenCurtain?.updateKeyboardLift(binding.root.height, imeBottom, inputH)
+    }
+
+    private fun openScreenView() {
+        if (!ConnectionManager.isConnected) {
+            Toast.makeText(this, "未连接到桌面端", Toast.LENGTH_SHORT).show()
+            return
+        }
+        screenCurtain?.open()
+    }
+
+    /** 初始化「下拉幕布」视频面板：内嵌控制器 + 手势/动画控制器。 */
+    private fun setupScreenCurtain() {
+        val s = session ?: return
+        val panel = ScreenPanelController(
+            renderer = binding.screenRenderer,
+            minimap = binding.minimap,
+            statusLabel = binding.screenStatus,
+            cover = binding.screenCover,
+        )
+        panel.init(DesktopConnection.eglBaseContext())
+        panel.bind(s.connectionId, s)
+
+        val curtain = ScreenCurtainController(
+            panel = binding.screenPanel,
+            shadow = binding.screenShadow,
+            grabHandle = binding.screenGrab,
+            headerDragHost = binding.chatHeader,
+            controller = panel,
+        )
+        screenCurtain = curtain
+        // 幕布底部热区：打开后在 hint 文案区上滑可收起整块面板（关闭视频）。
+        curtain.bindCollapseZone(binding.screenCollapseZone)
     }
 
     private fun showEnterActions(anchor: View, belowAnchor: Boolean = false) {
@@ -954,8 +1097,32 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
                 bottomMargin = composerBottom + visualBottomInset
             }
 
+            updateScreenCurtainLift(imeBottom)
+
             insets
         }
+
+        // 逐帧驱动文字输入栏跟随键盘升降；视频面板底边已约束钉在输入栏顶部，
+        // 故每帧 relayout 时面板与输入栏同帧上移，完全同步、无延迟。
+        ViewCompat.setWindowInsetsAnimationCallback(
+            binding.root,
+            object : androidx.core.view.WindowInsetsAnimationCompat.Callback(
+                androidx.core.view.WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_CONTINUE_ON_SUBTREE
+            ) {
+                override fun onProgress(
+                    insets: WindowInsetsCompat,
+                    runningAnimations: List<androidx.core.view.WindowInsetsAnimationCompat>
+                ): WindowInsetsCompat {
+                    val imeBottom = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+                    binding.textInputCard.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                        bottomMargin = imeBottom
+                    }
+                    // 键盘弹起时把整块视频面板向上平移让出空间（尺寸不变，窗帘式上推）。
+                    updateScreenCurtainLift(imeBottom)
+                    return insets
+                }
+            }
+        )
     }
 
     private fun applySystemBarAppearance() {

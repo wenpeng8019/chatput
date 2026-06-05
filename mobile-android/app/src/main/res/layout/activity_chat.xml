@@ -140,6 +140,26 @@
                 android:paddingEnd="14dp"
                 android:paddingBottom="10dp">
 
+                <FrameLayout
+                    android:id="@+id/btn_text_mic"
+                    android:layout_width="@dimen/control_small"
+                    android:layout_height="@dimen/control_small"
+                    android:layout_marginEnd="10dp"
+                    android:background="@drawable/bg_action_circle"
+                    android:clickable="true"
+                    android:contentDescription="切换语音输入"
+                    android:focusable="true">
+
+                    <ImageView
+                        android:layout_width="19dp"
+                        android:layout_height="19dp"
+                        android:layout_gravity="center"
+                        android:contentDescription="@null"
+                        android:src="@drawable/ic_mic"
+                        app:tint="@color/chatput_accent" />
+
+                </FrameLayout>
+
                 <EditText
                     android:id="@+id/input_text"
                     android:layout_width="0dp"
@@ -222,9 +242,9 @@
             android:clipChildren="false"
             android:clipToPadding="false"
             android:paddingStart="@dimen/space_5"
-            android:paddingTop="13dp"
+            android:paddingTop="8dp"
             android:paddingEnd="@dimen/space_5"
-            android:paddingBottom="13dp">
+            android:paddingBottom="8dp">
 
             <View
                 android:id="@+id/orb_halo"
@@ -372,5 +392,94 @@
             android:src="@drawable/ic_grab_corner" />
 
     </FrameLayout>
+
+    <!-- ===== 远程窗口画面「下拉幕布」面板 =====
+         从顶部下拉、覆盖标题与消息列表，底部留出语音交互区。
+         初始 translationY 在代码里设为 -高度 隐藏于屏幕上方。
+         面板顶部延展到状态栏下（沉浸式），不施加 top inset。 -->
+    <FrameLayout
+        android:id="@+id/screen_panel"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:background="#000000"
+        android:visibility="invisible"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/hint"
+        android:layout_marginBottom="8dp">
+
+        <org.webrtc.SurfaceViewRenderer
+            android:id="@+id/screen_renderer"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <!-- 不透明黑色遮盖：SurfaceView 在首帧前会在窗口上「打透明洞」，
+             此盖板在采集/连接期间盖住透明洞，避免下拉时露出后方画面；
+             首帧到达后由控制器置 GONE 露出视频。 -->
+        <View
+            android:id="@+id/screen_cover"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#000000" />
+
+        <TextView
+            android:id="@+id/screen_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="正在连接窗口画面…"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp" />
+
+        <com.chatput.app.MinimapView
+            android:id="@+id/minimap"
+            android:layout_width="150dp"
+            android:layout_height="110dp"
+            android:layout_gravity="bottom|end"
+            android:layout_margin="16dp" />
+
+        <!-- 顶部收起握把：上滑/下拉可把幕布收起（避开渲染器的视口拖动）。 -->
+        <View
+            android:id="@+id/screen_grab"
+            android:layout_width="match_parent"
+            android:layout_height="64dp"
+            android:layout_gravity="top"
+            android:contentDescription="上滑收起画面" />
+
+        <View
+            android:id="@+id/screen_grab_pill"
+            android:layout_width="40dp"
+            android:layout_height="4dp"
+            android:layout_gravity="top|center_horizontal"
+            android:layout_marginTop="10dp"
+            android:background="@drawable/bg_grab_pill"
+            android:importantForAccessibility="no" />
+
+    </FrameLayout>
+
+    <!-- 幕布下边缘投影：跟随面板底边，营造悬浮立体面板。纯渐变贴图，不用系统 elevation 阴影。 -->
+    <View
+        android:id="@+id/screen_shadow"
+        android:layout_width="0dp"
+        android:layout_height="18dp"
+        android:background="@drawable/bg_screen_bottom_shadow"
+        android:visibility="invisible"
+        app:layout_constraintTop_toBottomOf="@id/screen_panel"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
+    <!-- 幕布收起热区：覆盖 hint 整条带 + 视频底边 10dp（防误触视频拖动），全宽。
+         置于布局末尾以在 z 序上盖过视频面板；幕布打开时在此上滑收起，收起态不拦截。 -->
+    <View
+        android:id="@+id/screen_collapse_zone"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        android:contentDescription="上滑收起画面"
+        android:layout_marginTop="-10dp"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/screen_panel"
+        app:layout_constraintBottom_toTopOf="@id/composer_card" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

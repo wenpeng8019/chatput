@@ -2,7 +2,7 @@ name: ChatputDesktop
 options:
   bundleIdPrefix: com.chatput
   deploymentTarget:
-    macOS: "12.0"
+    macOS: "12.3"
   createIntermediateGroups: true
 
 settings:
@@ -27,7 +27,7 @@ targets:
       properties:
         CFBundleDisplayName: ChatPUT
         CFBundleName: ChatPUT
-        LSMinimumSystemVersion: "12.0"
+        LSMinimumSystemVersion: "12.3"
         NSHumanReadableCopyright: ""
         LSUIElement: true
         NSAppTransportSecurity:
