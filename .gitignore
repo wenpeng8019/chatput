@@ -31,6 +31,7 @@ xcuserdata/
 # ===== iOS 原生 (mobile-iphone) =====
 # XcodeGen 生成的工程，不入库（由 project.yml 生成）
 mobile-iphone/*.xcodeproj/
+mobile-iphone/build/
 
 # ===== 大体积 vendored 二进制（需另行下载，见各端 README）=====
 # sherpa-onnx ASR AAR（~54MB）

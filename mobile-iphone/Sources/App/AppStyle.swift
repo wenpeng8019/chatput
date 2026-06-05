@@ -18,6 +18,9 @@ enum AppColor {
     static let statusIdleText = Color(hex: 0x64717F)
     static let messageBubble = Color(hex: 0xE1EBFF)
     static let danger = Color(hex: 0xD14343)
+    /// 远程屏幕「幕布」占位底色（深灰，便于测试时辨识窗口范围；接入真实视频前使用）。
+    static let videoSurface = Color(hex: 0x1E2024)
+    static let videoMinimap = Color(hex: 0x303338)
 }
 
 extension Color {

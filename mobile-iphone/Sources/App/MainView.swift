@@ -159,6 +159,7 @@ struct MainView: View {
                 ChatView(connectionId: parts.first ?? "", sessionId: parts.dropFirst().first ?? "")
             }
         }
+        .ignoresSafeArea(.keyboard, edges: .bottom)
     }
 
     private var recentArea: some View {
@@ -325,5 +326,144 @@ private struct CircularSpinner: View {
             .rotationEffect(.degrees(rotating ? 360 : 0))
             .animation(.linear(duration: 0.9).repeatForever(autoreverses: false), value: rotating)
             .onAppear { rotating = true }
+    }
+}
+
+private struct ChatViewSeed: View {
+    /// 输入区模式：语音 / 文本，二选一显示，inputView 自身是固定高度区域。
+    private enum InputMode {
+        case voice
+        case text
+    }
+
+    @Environment(\.dismiss) private var dismiss
+    let connectionId: String
+    let sessionId: String
+    @State private var inputText = ""
+    @FocusState private var inputFocused: Bool
+    @State private var inputMode: InputMode = .voice
+
+    /// 输入区固定高度：语音区和文本区取统一固定值，保证 messages 是唯一弹性区。
+    private let inputViewHeight: CGFloat = 140
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            messages
+            inputView
+                .frame(height: inputViewHeight)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .navigationBarBackButtonHidden(true)
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    // MARK: header
+    private var header: some View {
+        ZStack(alignment: .topLeading) {
+            Color(red: 0.95, green: 0.58, blue: 0.22)
+            HStack(spacing: 12) {
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 36, height: 36)
+                        .background(.black.opacity(0.2))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+
+                Text("header")
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(.white)
+
+                Spacer()
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+        }
+        .frame(height: 96)
+    }
+
+    // MARK: messages（唯一弹性区）
+    private var messages: some View {
+        ZStack {
+            Color(red: 0.20, green: 0.63, blue: 0.86)
+            VStack(spacing: 8) {
+                Text("messages")
+                    .font(.system(size: 24, weight: .bold))
+                    .foregroundStyle(.white)
+                Text("唯一弹性区，吸收剩余高度")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white.opacity(0.9))
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: inputView（固定高度，voice / text 切换可见性）
+    private var inputView: some View {
+        ZStack {
+            AppColor.surface
+
+            switch inputMode {
+            case .voice:
+                voiceInputView
+            case .text:
+                textInputView
+            }
+        }
+        .overlay(Rectangle().fill(AppColor.line).frame(height: 1), alignment: .top)
+    }
+
+    private var voiceInputView: some View {
+        VStack(spacing: 12) {
+            Text("voice input view")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(AppColor.textPrimary)
+
+            Button {
+                inputMode = .text
+                inputFocused = true
+            } label: {
+                Text("切换到文本输入")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
+                    .background(AppColor.accent)
+                    .clipShape(Capsule())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 18)
+    }
+
+    private var textInputView: some View {
+        VStack(spacing: 12) {
+            TextField("输入内容", text: $inputText)
+                .textFieldStyle(.plain)
+                .font(.system(size: 16))
+                .focused($inputFocused)
+                .padding(.horizontal, 14)
+                .frame(height: 46)
+                .background(AppColor.surfaceAlt)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .submitLabel(.done)
+
+            Button {
+                inputFocused = false
+                inputMode = .voice
+            } label: {
+                Text("切换到语音输入")
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(AppColor.accent)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 18)
+        .padding(.vertical, 12)
     }
 }
