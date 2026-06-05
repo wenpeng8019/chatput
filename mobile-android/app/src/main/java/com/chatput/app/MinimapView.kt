@@ -24,6 +24,12 @@ class MinimapView @JvmOverloads constructor(
 
     /** 拖动红框时回调新的视口左上角（窗口像素，已钳制）。 */
     var onViewportMove: ((x: Int, y: Int) -> Unit)? = null
+    /** 长按缩略图时回调，用于弹出位置设置菜单。 */
+    var onLongPress: (() -> Unit)? = null
+
+    init {
+        setOnLongClickListener { onLongPress?.invoke(); true }
+    }
 
     private var thumbnail: Bitmap? = null
     private var winW = 0

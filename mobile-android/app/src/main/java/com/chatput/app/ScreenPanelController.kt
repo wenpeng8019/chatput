@@ -2,11 +2,18 @@ package com.chatput.app
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color
+import android.graphics.drawable.ColorDrawable
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.TextView
 import org.webrtc.EglBase
 import org.webrtc.RendererCommon
@@ -65,6 +72,7 @@ class ScreenPanelController(
         renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
         renderer.setEnableHardwareScaler(true)
         minimap.onViewportMove = { x, y -> moveViewportTo(x, y) }
+        minimap.onLongPress = { showPositionPicker() }
         setupRendererDrag()
     }
 
@@ -227,4 +235,55 @@ class ScreenPanelController(
         lastViewportSentAt = System.currentTimeMillis()
         ConnectionManager.sendViewport(s, vpX, vpY, vpW, vpH)
     }
+
+    // 缩略图位置
+
+    private fun showPositionPicker() {
+        val ctx = minimap.context
+        val content = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(8.dp, 8.dp, 8.dp, 8.dp)
+        }
+        val popup = PopupWindow(content,
+            ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT, true)
+        popup.isOutsideTouchable = true
+        popup.setBackgroundDrawable(ColorDrawable(Color.parseColor("#CC1C1C1E")))
+
+        MinimapPosition.values().forEach { pos ->
+            val label = TextView(ctx).apply {
+                text = pos.label
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                setPadding(16.dp, 10.dp, 16.dp, 10.dp)
+            }
+            label.setOnClickListener {
+                popup.dismiss()
+                applyMinimapPosition(pos)
+            }
+            content.addView(label)
+        }
+        content.measure(
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+        popup.showAsDropDown(minimap, -content.measuredWidth + minimap.width, -content.measuredHeight - 8.dp)
+    }
+
+    private fun applyMinimapPosition(pos: MinimapPosition) {
+        (minimap.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+            lp.gravity = pos.gravity
+            minimap.layoutParams = lp
+        }
+    }
+
+    private val Int.dp: Int get() = (this * renderer.resources.displayMetrics.density).toInt()
+}
+
+enum class MinimapPosition(val gravity: Int, val label: String) {
+    TOP_LEFT(Gravity.TOP or Gravity.START, "左上"),
+    TOP_RIGHT(Gravity.TOP or Gravity.END, "右上"),
+    LEFT(Gravity.CENTER_VERTICAL or Gravity.START, "左侧中"),
+    RIGHT(Gravity.CENTER_VERTICAL or Gravity.END, "右侧中"),
+    BOTTOM_LEFT(Gravity.BOTTOM or Gravity.START, "左下"),
+    BOTTOM_RIGHT(Gravity.BOTTOM or Gravity.END, "右下"),
 }
