@@ -163,7 +163,8 @@ final class WebRTCManager: NSObject {
         // 锁定输出格式为采集分辨率，禁止 WebRTC 自适应降采样（否则画面发虚）。
         if w != lastAdaptW || h != lastAdaptH {
             lastAdaptW = w; lastAdaptH = h
-            source.adaptOutputFormat(toWidth: w, height: h, fps: 30)
+            let fps = Int32(AppSettings.shared.screenFPS.value)
+            source.adaptOutputFormat(toWidth: w, height: h, fps: fps)
             raiseVideoBitrate()
         }
         let rtcBuffer = RTCCVPixelBuffer(pixelBuffer: pixelBuffer)
@@ -179,7 +180,7 @@ final class WebRTCManager: NSObject {
         for encoding in params.encodings {
             encoding.maxBitrateBps = NSNumber(value: 8_000_000)   // 8 Mbps
             encoding.minBitrateBps = NSNumber(value: 1_500_000)
-            encoding.maxFramerate = NSNumber(value: 30)
+            encoding.maxFramerate = NSNumber(value: AppSettings.shared.screenFPS.value)
         }
         sender.parameters = params
     }

@@ -40,6 +40,17 @@ enum TransportMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// 远程桌面采集帧率。
+enum ScreenFPS: String, CaseIterable, Identifiable {
+    case fps12 = "12"
+    case fps18 = "18"
+    case fps24 = "24"
+    case fps30 = "30"
+    var id: String { rawValue }
+    var label: String { "\(rawValue) FPS" }
+    var value: Int { Int(rawValue) ?? 24 }
+}
+
 /// 拖动光标上/下移到首行或末行边界时的行为。
 /// macOS 原生在首行再上移会跳到全文开头、末行再下移会跳到全文结尾。
 enum CursorBoundaryMode: String, CaseIterable, Identifiable {
@@ -81,6 +92,7 @@ final class AppSettings: ObservableObject {
         static let ipOverride = "signaling.ipOverride"
         static let externalURL = "signaling.externalURL"
         static let language = "app.language"
+        static let screenFPS = "screen.fps"
         static let cursorBoundary = "cursor.boundaryMode"
     }
 
@@ -112,6 +124,10 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(language.rawValue, forKey: Key.language) }
     }
     /// 拖动光标到首/末行边界时的行为。
+    /// 远程桌面采集帧率（默认 24）。
+    @Published var screenFPS: ScreenFPS {
+        didSet { defaults.set(screenFPS.rawValue, forKey: Key.screenFPS) }
+    }
     @Published var cursorBoundary: CursorBoundaryMode {
         didSet { defaults.set(cursorBoundary.rawValue, forKey: Key.cursorBoundary) }
     }
@@ -135,6 +151,8 @@ final class AppSettings: ObservableObject {
         defaults.set(normalizedExternalURL, forKey: Key.externalURL)
         let lang = defaults.string(forKey: Key.language) ?? AppLanguage.system.rawValue
         language = AppLanguage(rawValue: lang) ?? .system
+        let fpsRaw = defaults.string(forKey: Key.screenFPS) ?? ScreenFPS.fps18.rawValue
+        screenFPS = ScreenFPS(rawValue: fpsRaw) ?? .fps18
         let boundaryRaw = defaults.string(forKey: Key.cursorBoundary) ?? CursorBoundaryMode.native.rawValue
         cursorBoundary = CursorBoundaryMode(rawValue: boundaryRaw) ?? .native
         launchAtLogin = LoginItem.isEnabled

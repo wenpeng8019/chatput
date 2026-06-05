@@ -90,7 +90,7 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         config.pixelFormat = kCVPixelFormatType_32BGRA
         config.queueDepth = 5
         config.showsCursor = true
-        config.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+        config.minimumFrameInterval = CMTime(value: 1, timescale: Int32(AppSettings.shared.screenFPS.value))
 
         let s = SCStream(filter: filter, configuration: config, delegate: self)
         do {

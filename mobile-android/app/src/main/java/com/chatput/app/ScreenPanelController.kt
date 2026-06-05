@@ -51,11 +51,12 @@ class ScreenPanelController(
     private var released = false
 
     // 视口（窗口像素系）。winW/winH 来自桌面 screen-meta。
+    // vpX/vpY 用 Float 避免拖动时 Int 截断导致方向性速度偏差。
     private var winW = 0
     private var winH = 0
     private var winScale = 2f
-    private var vpX = 0
-    private var vpY = 0
+    private var vpX = 0f
+    private var vpY = 0f
     private var vpW = 0
     private var vpH = 0
     private var viewportInited = false
@@ -72,7 +73,7 @@ class ScreenPanelController(
         renderer.init(eglContext, null)
         renderer.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
         renderer.setEnableHardwareScaler(true)
-        minimap.onViewportMove = { x, y -> moveViewportTo(x, y) }
+        minimap.onViewportMove = { x, y -> moveViewportTo(x.toFloat(), y.toFloat()) }
         minimap.onLongPress = { showPositionPicker() }
         setupRendererDrag()
     }
@@ -164,7 +165,7 @@ class ScreenPanelController(
             }
             // viewportInited 之后不再用桌面回填的 applied 覆盖本地 vpX/vpY，
             // 手机为视口唯一权威，避免与拖动乐观更新打架导致抖动。
-            minimap.setMeta(winW, winH, vpX, vpY, vpW, vpH)
+            minimap.setMeta(winW, winH, vpX.toInt(), vpY.toInt(), vpW, vpH)
         }
     }
 
@@ -179,18 +180,18 @@ class ScreenPanelController(
         val density = renderer.resources.displayMetrics.density.coerceAtLeast(1f)
         vpW = (rw / density).toInt().coerceIn(1, winW)
         vpH = (rh / density).toInt().coerceIn(1, winH)
-        vpX = ((winW - vpW) / 2)
-        vpY = ((winH - vpH) / 2)
+        vpX = (winW - vpW).coerceAtLeast(0).toFloat()
+        vpY = (winH - vpH).coerceAtLeast(0).toFloat()
         Log.d(TAG, "initVp renderer=${rw}x${rh} density=$density -> vp=($vpX,$vpY ${vpW}x$vpH) win=${winW}x${winH}")
         sendViewportNow()
     }
 
     /** 把视口左上角移到窗口像素 (x,y)，钳制后节流下发。 */
-    private fun moveViewportTo(x: Int, y: Int) {
+    private fun moveViewportTo(x: Float, y: Float) {
         if (winW <= 0 || winH <= 0 || vpW <= 0 || vpH <= 0) return
-        vpX = x.coerceIn(0, (winW - vpW).coerceAtLeast(0))
-        vpY = y.coerceIn(0, (winH - vpH).coerceAtLeast(0))
-        minimap.setMeta(winW, winH, vpX, vpY, vpW, vpH)
+        vpX = x.coerceIn(0f, (winW - vpW).toFloat().coerceAtLeast(0f))
+        vpY = y.coerceIn(0f, (winH - vpH).toFloat().coerceAtLeast(0f))
+        minimap.setMeta(winW, winH, vpX.toInt(), vpY.toInt(), vpW, vpH)
         queueViewport()
     }
 
@@ -246,7 +247,7 @@ class ScreenPanelController(
                                 val dxWin = (event.x - dragLastX) / dispScale
                                 val dyWin = (event.y - dragLastY) / dispScale
                                 dragLastX = event.x; dragLastY = event.y
-                                moveViewportTo((vpX - dxWin).toInt(), (vpY - dyWin).toInt())
+                                moveViewportTo(vpX - dxWin, vpY - dyWin)
                             }
                         }
                     }
@@ -277,7 +278,7 @@ class ScreenPanelController(
         val contentTop = (renderer.height - vpH * dispScale) / 2f
         val wx = ((rx - contentLeft) / dispScale).toInt().coerceIn(0, vpW - 1)
         val wy = ((ry - contentTop) / dispScale).toInt().coerceIn(0, vpH - 1)
-        return Pair(vpX + wx, vpY + wy)
+        return Pair((vpX + wx).toInt(), (vpY + wy).toInt())
     }
 
     /** SCALE_ASPECT_FIT 渲染的显示缩放系数。 */
@@ -301,7 +302,7 @@ class ScreenPanelController(
         val s = session ?: return
         if (vpW <= 0 || vpH <= 0) return
         lastViewportSentAt = System.currentTimeMillis()
-        ConnectionManager.sendViewport(s, vpX, vpY, vpW, vpH)
+        ConnectionManager.sendViewport(s, vpX.toInt(), vpY.toInt(), vpW, vpH)
     }
 
     // 缩略图位置

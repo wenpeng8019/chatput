@@ -17,6 +17,8 @@ struct SettingsView: View {
         TabView {
             generalTab
                 .tabItem { Label(L.t("通用", "General"), systemImage: "gearshape") }
+            screenTab
+                .tabItem { Label(L.t("远程画面", "Screen"), systemImage: "display") }
             builtInTab
                 .tabItem { Label(L.t("内置服务", "Built-in"), systemImage: "house") }
             externalTab
@@ -106,6 +108,36 @@ struct SettingsView: View {
                     .labelsHidden()
                     .frame(width: 260)
                     .id(settings.language)
+                    Spacer()
+                }
+            }
+
+            Spacer()
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    // MARK: - 远程画面
+
+    private var screenTab: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            sectionHeader(L.t("远程画面", "Screen"),
+                          subtitle: L.t("远程桌面的采集、编码与交互参数。",
+                                        "Capture, encoding and interaction settings for remote screen."))
+
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 12) {
+                    Text(L.t("采集帧率", "FPS"))
+                        .font(.system(size: 12))
+                        .frame(width: 90, alignment: .leading)
+                    Picker("", selection: $settings.screenFPS) {
+                        ForEach(ScreenFPS.allCases) { fps in
+                            Text(fps.label).tag(fps)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 120)
                     Spacer()
                 }
             }

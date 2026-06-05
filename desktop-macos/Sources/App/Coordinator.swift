@@ -460,6 +460,14 @@ final class Coordinator {
             self.state.log("session closed:", sessionId)
             self.sendSessionClosed(sessionId: sessionId)
         }
+        focus.onSessionInputLost = { [weak self] sessionId in
+            guard let self = self else { return }
+            self.state.log("session input lost:", sessionId)
+            self.sendPeerMessage([
+                Wire.Key.type: Wire.Msg.sessionInputLost,
+                "sessionId": sessionId,
+            ])
+        }
     }
 
     private func sendSession(_ session: FocusSession) {

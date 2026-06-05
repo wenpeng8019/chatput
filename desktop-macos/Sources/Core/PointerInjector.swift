@@ -44,11 +44,11 @@ final class PointerInjector {
             .post(tap: .cghidEventTap)
     }
 
-    /// dx/dy 为像素级滚动量。正值向下/向右。
+    /// dx/dy 为像素级滚动量。macOS 自然滚动方向与触控手势相反，取反。
     func scroll(dx: Int, dy: Int) {
         guard let event = CGEvent(
             scrollWheelEvent2Source: nil, units: .pixel,
-            wheelCount: 2, wheel1: Int32(dy), wheel2: Int32(dx), wheel3: 0) else { return }
+            wheelCount: 2, wheel1: Int32(-dy), wheel2: Int32(dx), wheel3: 0) else { return }
         event.setIntegerValueField(.scrollWheelEventScrollCount, value: 1)
         event.post(tap: .cghidEventTap)
     }

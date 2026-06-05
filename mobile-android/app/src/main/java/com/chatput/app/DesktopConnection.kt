@@ -418,6 +418,11 @@ internal class DesktopConnection(
         when (msg.optString("type")) {
             "session" -> upsertSession(msg)
             "session-closed" -> removeSession(msg.optString("sessionId"))
+            "session-input-lost" -> {
+                val sid = msg.optString("sessionId")
+                sessions.firstOrNull { it.id == sid }?.inputAvailable = false
+                notifySessions()
+            }
             "screen-meta" -> handleScreenMeta(msg)
         }
     }
@@ -475,7 +480,8 @@ internal class DesktopConnection(
                 app = msg.optString("app"),
                 title = msg.optString("title"),
                 device = if (device.isNotBlank()) device else existing.device,
-                isActive = true
+                isActive = true,
+                inputAvailable = true
             )
             updated.messages.addAll(existing.messages)
             if (device.isNotBlank()) existing.device = device

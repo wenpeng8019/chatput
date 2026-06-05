@@ -664,17 +664,26 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
     private fun sendTypedText() {
         val text = binding.inputText.text?.toString()?.trim().orEmpty()
         if (text.isBlank()) return
-        if (!ConnectionManager.isConnected) {
-            Toast.makeText(this, "未连接到桌面端", Toast.LENGTH_SHORT).show()
+        if (!isInputAvailable()) {
+            if (!ConnectionManager.isConnected) {
+                Toast.makeText(this, "未连接到桌面端", Toast.LENGTH_SHORT).show()
+            }
             return
         }
         session?.let { ConnectionManager.sendText(it, text) }
         binding.inputText.text?.clear()
     }
 
+    /** 桌面端输入控件是否可用（窗口打开但 input 可能被 AI 菜单等暂时遮住）。 */
+    private fun isInputAvailable(): Boolean {
+        return session?.inputAvailable != false && ConnectionManager.isConnected
+    }
+
     private fun sendAction(action: String) {
-        if (!ConnectionManager.isConnected) {
-            Toast.makeText(this, "未连接到桌面端", Toast.LENGTH_SHORT).show()
+        if (!isInputAvailable()) {
+            if (!ConnectionManager.isConnected) {
+                Toast.makeText(this, "未连接到桌面端", Toast.LENGTH_SHORT).show()
+            }
             return
         }
         session?.let { ConnectionManager.sendAction(it, action) }
@@ -714,8 +723,10 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
             Toast.makeText(this, "请先授予录音权限", Toast.LENGTH_SHORT).show()
             return
         }
-        if (!ConnectionManager.isConnected) {
-            Toast.makeText(this, "未连接到桌面端", Toast.LENGTH_SHORT).show()
+        if (!isInputAvailable()) {
+            if (!ConnectionManager.isConnected) {
+                Toast.makeText(this, "未连接到桌面端", Toast.LENGTH_SHORT).show()
+            }
             return
         }
         v.isPressed = true
@@ -960,8 +971,10 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
     /** 双击历史气泡：重新发送（不新增历史项），并弹出"已发送"气泡。 */
     private fun resendMessage(anchor: View, position: Int) {
         val msg = session?.messages?.getOrNull(position) ?: return
-        if (!ConnectionManager.isConnected) {
-            Toast.makeText(this, "未连接到桌面端", Toast.LENGTH_SHORT).show()
+        if (!isInputAvailable()) {
+            if (!ConnectionManager.isConnected) {
+                Toast.makeText(this, "未连接到桌面端", Toast.LENGTH_SHORT).show()
+            }
             return
         }
         anchor.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
@@ -1159,6 +1172,24 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
             returnToSessionList()
         } else {
             session = updated
+            refreshInputState()
+        }
+    }
+
+    /** 根据 session.inputAvailable 启用/禁用输入控件。 */
+    private fun refreshInputState() {
+        val available = session?.inputAvailable != false
+        val alpha = if (available) 1f else 0.35f
+        binding.btnTalk.alpha = alpha
+        binding.btnTalk.isEnabled = available
+        binding.btnBackspace.alpha = alpha
+        binding.btnBackspace.isEnabled = available
+        binding.btnEnter.alpha = alpha
+        binding.btnEnter.isEnabled = available
+        binding.inputText.isEnabled = available
+        binding.btnSend.isEnabled = available
+        if (!available) {
+            binding.hint.text = "输入暂时不可用…"
         }
     }
 

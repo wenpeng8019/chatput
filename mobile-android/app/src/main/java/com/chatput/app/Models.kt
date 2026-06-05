@@ -8,7 +8,8 @@ data class Session(
     val title: String,
     var device: String = "",
     val messages: MutableList<ChatMessage> = mutableListOf(),
-    var isActive: Boolean = false
+    var isActive: Boolean = false,
+    var inputAvailable: Boolean = true   // 桌面端输入控件是否就绪
 )
 
 /** 一条消息 */

@@ -6,6 +6,8 @@ import ApplicationServices
 final class FocusMonitor {
     var onSession: ((FocusSession) -> Void)?
     var onSessionClosed: ((String) -> Void)?
+    /// 窗口仍在但输入控件暂时不可用时回调（与 session-closed 互斥）。
+    var onSessionInputLost: ((String) -> Void)?
 
     private var observer: AXObserver?
     private var observedPID: pid_t = 0
@@ -15,6 +17,8 @@ final class FocusMonitor {
     private let finderBundleId = "com.apple.finder"
     private var knownSessions: [String: String] = [:] // sessionId -> appName
     private var windowExistenceTimer: Timer?
+    /** 已发过 input-lost 的 session，避免轮询时重复发。 */
+    private var pendingInputLost: Set<String> = []
 
     private let notifications: [String] = [
         kAXFocusedUIElementChangedNotification,
@@ -117,6 +121,7 @@ final class FocusMonitor {
 
         onSession?(FocusSession(id: key, app: appName, title: title, ts: Date().timeIntervalSince1970 * 1000))
         knownSessions[key] = appName
+        pendingInputLost.remove(key)
     }
 
     private func focusedWindowTitle(pid: pid_t) -> String {
@@ -152,6 +157,8 @@ final class FocusMonitor {
         var liveSessionIds = Set<String>()
         var readableApps = Set<String>()
         var runningApps = Set<String>()
+        // appName → 该 app 当前是否有窗口
+        var appHasWindows: [String: Bool] = [:]
 
         for app in NSWorkspace.shared.runningApplications {
             guard app.activationPolicy == .regular,
@@ -161,24 +168,45 @@ final class FocusMonitor {
 
             guard let titles = windowTitles(pid: app.processIdentifier) else { continue }
             readableApps.insert(appName)
+            appHasWindows[appName] = !titles.isEmpty
             titles.forEach { title in
                 liveSessionIds.insert("\(appName)|\(title)")
             }
         }
 
-        var closedSessionIds: [String] = []
         for (sessionId, appName) in knownSessions {
             let appStillRunning = runningApps.contains(appName)
             let canJudgeWindows = readableApps.contains(appName)
-            if !appStillRunning || (canJudgeWindows && !liveSessionIds.contains(sessionId)) {
-                closedSessionIds.append(sessionId)
+            let hasWindows = appHasWindows[appName] ?? false
+            let titleGone = canJudgeWindows && !liveSessionIds.contains(sessionId)
+
+            if !appStillRunning || (titleGone && !hasWindows) {
+                // 窗口确实已关闭（app 退出或没有任何窗口了）。
+                knownSessions.removeValue(forKey: sessionId)
+                pendingInputLost.remove(sessionId)
+                if lastKey == sessionId { lastKey = "" }
+                onSessionClosed?(sessionId)
+            } else if titleGone && hasWindows && !pendingInputLost.contains(sessionId) {
+                // 窗口仍在但当前标题丢失 → input 暂时不可用，不关闭会话。
+                pendingInputLost.insert(sessionId)
+                onSessionInputLost?(sessionId)
             }
         }
 
-        closedSessionIds.forEach { sessionId in
-            knownSessions.removeValue(forKey: sessionId)
-            if lastKey == sessionId { lastKey = "" }
-            onSessionClosed?(sessionId)
+        // 检测已 lost 的 session 是否恢复：标题重新出现则重发 session 以恢复输入。
+        for sessionId in pendingInputLost {
+            if liveSessionIds.contains(sessionId) {
+                pendingInputLost.remove(sessionId)
+                if lastKey == sessionId { lastKey = "" }
+                let parts = sessionId.split(separator: "|", maxSplits: 1).map(String.init)
+                let appName = parts.first ?? ""
+                let title = parts.count > 1 ? parts[1] : ""
+                let session = FocusSession(id: sessionId, app: appName, title: title,
+                                           ts: Date().timeIntervalSince1970 * 1000)
+                knownSessions[sessionId] = appName
+                onSession?(session)
+                break
+            }
         }
     }
 

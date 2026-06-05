@@ -22,6 +22,8 @@ enum Wire {
         static let session = "session"
         /// 桌面 → 手机：已上报过的输入窗口关闭，移除对应会话。
         static let sessionClosed = "session-closed"
+        /// 桌面 → 手机：窗口仍在但输入控件暂时不可用（如 AI 助手弹出菜单遮住了输入框）。
+        static let sessionInputLost = "session-input-lost"
         /// 手机 → 桌面：识别得到的文本。
         static let text = "text"
         /// 手机 → 桌面：操作指令（回车/退格/全选/清空）。
