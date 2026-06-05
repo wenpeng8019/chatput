@@ -52,6 +52,11 @@ struct ChatView: View {
     @State private var cursorAbsDelta: CGFloat = 0
     @State private var isContinuous = false
     @State private var pullProgress: CGFloat = 0
+    @State private var screenPanelOpen = false
+    @State private var screenPanelDragOffset: CGFloat = 0
+    @State private var inputViewTop: CGFloat = 0
+    @State private var keyboardAnimationDuration: Double = 0.25
+    @State private var keyboardAnimationCurve: UIView.AnimationCurve = .easeInOut
 
     private var session: DesktopSession? { connections.session(connectionId: connectionId, sessionId: sessionId) }
 
@@ -89,10 +94,26 @@ struct ChatView: View {
                     .frame(maxHeight: .infinity, alignment: .bottom)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
+
+            if session != nil, screenPanelOpen || screenPanelDragOffset != 0 {
+                screenPanelOverlay
+                    .transition(.opacity)
+                    .zIndex(10)
+            }
+        }
+        .onPreferenceChange(InputViewFrameKey.self) { rect in
+            if inputViewTop == 0 {
+                inputViewTop = rect.minY
+            } else {
+                withAnimation(keyboardFollowAnimation) {
+                    inputViewTop = rect.minY
+                }
+            }
         }
         .navigationBarBackButtonHidden(true)
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog("更多操作", isPresented: $showHeaderActions, titleVisibility: .hidden) {
+            Button("查看屏幕") { openScreenPanel() }
             Button("全选") { sendAction("selectAll") }
             Button("清空") { sendAction("clear"); showToast("已清空") }
             Button("取消", role: .cancel) {}
@@ -105,6 +126,12 @@ struct ChatView: View {
                 showToast("桌面已断开")
                 dismiss()
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
+            updateKeyboardAnimation(from: note)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { note in
+            updateKeyboardAnimation(from: note)
         }
         .onAppear {
             speech.requestPermissions()
@@ -152,6 +179,8 @@ struct ChatView: View {
                 }
                 Spacer()
             }
+            .contentShape(Rectangle())
+            .gesture(screenPanelOpenGesture())
             Button { showHeaderActions = true } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 21, weight: .bold))
@@ -281,6 +310,15 @@ struct ChatView: View {
         .padding(.top, 8)
         .padding(.bottom, 8)
         .offset(y: -TalkUX.composerLift * pullProgress)
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(
+                        key: InputViewFrameKey.self,
+                        value: proxy.frame(in: .global)
+                    )
+            }
+        )
     }
 
     /// 上划弹出文本输入：上拉超过阈值切到文本模式并拉起键盘。
@@ -607,6 +645,15 @@ struct ChatView: View {
                 withAnimation { inputMode = .voice }
             }
         })
+        .background(
+            GeometryReader { proxy in
+                Color.clear
+                    .preference(
+                        key: InputViewFrameKey.self,
+                        value: proxy.frame(in: .global)
+                    )
+            }
+        )
     }
 
     private func sendTypedText(_ session: DesktopSession) {
@@ -626,6 +673,175 @@ struct ChatView: View {
         withAnimation { toast = text }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { withAnimation { toast = nil } }
     }
+
+    private var keyboardFollowAnimation: Animation {
+        switch keyboardAnimationCurve {
+        case .easeInOut:
+            return .easeInOut(duration: keyboardAnimationDuration)
+        case .easeIn:
+            return .easeIn(duration: keyboardAnimationDuration)
+        case .easeOut:
+            return .easeOut(duration: keyboardAnimationDuration)
+        case .linear:
+            return .linear(duration: keyboardAnimationDuration)
+        @unknown default:
+            return .easeInOut(duration: keyboardAnimationDuration)
+        }
+    }
+
+    private func updateKeyboardAnimation(from note: Notification) {
+        let userInfo = note.userInfo ?? [:]
+        if let duration = userInfo[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double {
+            keyboardAnimationDuration = duration
+        }
+        if let curveRaw = userInfo[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int,
+           let curve = UIView.AnimationCurve(rawValue: curveRaw) {
+            keyboardAnimationCurve = curve
+        }
+    }
+
+    private var screenPanelOverlay: some View {
+        GeometryReader { geo in
+            let topInset = geo.safeAreaInsets.top
+            let screenHeight = UIScreen.main.bounds.height
+            let fallbackBottom = screenHeight - (geo.safeAreaInsets.bottom + 48)
+            let measuredBottomFromTop = inputViewTop > 0 ? inputViewTop : 0
+            let measuredBottom = measuredBottomFromTop > 0
+                ? measuredBottomFromTop
+                : fallbackBottom
+            let panelHeight = min(screenHeight, max(360, measuredBottom))
+            let restingOffset = -panelHeight - 18
+            let openOffset = min(0, screenPanelDragOffset)
+            let closedOffset = max(restingOffset, restingOffset + screenPanelDragOffset)
+            let yOffset = screenPanelOpen ? openOffset : closedOffset
+            VStack(spacing: 0) {
+                VStack(spacing: 0) {
+                    ZStack {
+                        AppColor.videoSurface
+
+                        LinearGradient(
+                            colors: [Color.black.opacity(0.18), Color.clear],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(maxHeight: .infinity, alignment: .top)
+
+                        VStack(spacing: 10) {
+                            Spacer(minLength: topInset + 24)
+                            Image(systemName: "display")
+                                .font(.system(size: 34, weight: .regular))
+                                .foregroundStyle(.white.opacity(0.32))
+                            Text("屏幕画面（占位）")
+                                .font(.system(size: 14))
+                                .foregroundStyle(.white.opacity(0.5))
+                            Spacer(minLength: 0)
+                        }
+
+                        VStack {
+                            Capsule()
+                                .fill(Color.white.opacity(0.5))
+                                .frame(width: 40, height: 4)
+                                .padding(.top, topInset + 6)
+                            Spacer()
+                            HStack {
+                                Spacer()
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(AppColor.videoMinimap)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                                    )
+                                    .frame(width: 150, height: 110)
+                                    .padding(.trailing, 16)
+                                    .padding(.bottom, 22)
+                            }
+                        }
+                    }
+                    .frame(height: panelHeight)
+                    .frame(maxWidth: .infinity)
+
+                    LinearGradient(
+                        colors: [Color.black.opacity(0.22), Color.clear],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                    .frame(height: 18)
+                }
+                .offset(y: yOffset)
+                .gesture(screenPanelOverlayGesture(restingOffset: restingOffset))
+                .allowsHitTesting(true)
+
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .allowsHitTesting(false)
+            .ignoresSafeArea(edges: .top)
+            .ignoresSafeArea(.keyboard, edges: .bottom)
+            .animation(.timingCurve(0, 0, 0.2, 1, duration: 0.28), value: screenPanelOpen)
+            .animation(keyboardFollowAnimation, value: inputViewTop)
+        }
+    }
+
+    private func screenPanelOpenGesture() -> some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                guard !screenPanelOpen else { return }
+                screenPanelDragOffset = max(0, value.translation.height)
+            }
+            .onEnded { value in
+                guard !screenPanelOpen else {
+                    screenPanelDragOffset = 0
+                    return
+                }
+                defer { screenPanelDragOffset = 0 }
+                if value.translation.height > 44 || value.predictedEndTranslation.height > 80 {
+                    openScreenPanel()
+                }
+            }
+    }
+
+    private func screenPanelOverlayGesture(restingOffset: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 6)
+            .onChanged { value in
+                if screenPanelOpen {
+                    screenPanelDragOffset = min(0, value.translation.height)
+                } else {
+                    screenPanelDragOffset = max(restingOffset, value.translation.height)
+                }
+            }
+            .onEnded { value in
+                let drag = value.translation.height
+                let predicted = value.predictedEndTranslation.height
+                if screenPanelOpen {
+                    if drag < -48 || predicted < -80 {
+                        closeScreenPanel()
+                    } else {
+                        withAnimation(.timingCurve(0, 0, 0.2, 1, duration: 0.28)) {
+                            screenPanelDragOffset = 0
+                        }
+                    }
+                } else {
+                    if drag > 44 || predicted > 80 {
+                        openScreenPanel()
+                    } else {
+                        withAnimation(.timingCurve(0, 0, 0.2, 1, duration: 0.28)) {
+                            screenPanelDragOffset = 0
+                        }
+                    }
+                }
+            }
+    }
+
+    private func openScreenPanel() {
+        if !screenPanelOpen { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+        screenPanelOpen = true
+        screenPanelDragOffset = 0
+    }
+
+    private func closeScreenPanel() {
+        screenPanelOpen = false
+        screenPanelDragOffset = 0
+    }
 }
 
 private struct MessageBubble: View {
@@ -641,6 +857,33 @@ private struct MessageBubble: View {
             .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
             .frame(maxWidth: 280, alignment: message.fromMe ? .trailing : .leading)
             .frame(maxWidth: .infinity, alignment: message.fromMe ? .trailing : .leading)
+    }
+}
+
+private struct InputViewTopKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct InputViewHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+private struct InputViewFrameKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let next = nextValue()
+        if next != .zero {
+            value = next
+        }
     }
 }
 
