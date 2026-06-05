@@ -9,6 +9,8 @@ import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
 
@@ -26,10 +28,6 @@ class MinimapView @JvmOverloads constructor(
     var onViewportMove: ((x: Int, y: Int) -> Unit)? = null
     /** 长按缩略图时回调，用于弹出位置设置菜单。 */
     var onLongPress: (() -> Unit)? = null
-
-    init {
-        setOnLongClickListener { onLongPress?.invoke(); true }
-    }
 
     private var thumbnail: Bitmap? = null
     private var winW = 0
@@ -58,6 +56,13 @@ class MinimapView @JvmOverloads constructor(
     private var dragging = false
     private var dragDx = 0f
     private var dragDy = 0f
+    private var downX = 0f
+    private var downY = 0f
+
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
+    private val longPressTimeout = ViewConfiguration.getLongPressTimeout().toLong()
+    private val longPressRunnable = Runnable { onLongPress?.invoke() }
+    private var longPressPending = false
 
     /** 设置整窗缩略图（贴图）。窗口像素尺寸以 screen-meta 为准，不取 JPEG 像素。 */
     fun setThumbnail(bitmap: Bitmap) {
@@ -116,7 +121,6 @@ class MinimapView @JvmOverloads constructor(
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        // 只要知道窗口尺寸与视口大小即可交互；触点落在框外则以触点为中心跳转。
         if (winW <= 0 || winH <= 0 || vpW <= 0 || vpH <= 0 || contentRect.isEmpty) return false
         val sx = contentRect.width() / winW
         val sy = contentRect.height() / winH
@@ -127,27 +131,30 @@ class MinimapView @JvmOverloads constructor(
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                dragging = true
-                parent?.requestDisallowInterceptTouchEvent(true)
+                downX = event.x; downY = event.y
+                longPressPending = true
+                postDelayed(longPressRunnable, longPressTimeout)
                 val inside = event.x in boxLeft..boxRight && event.y in boxTop..boxBottom
                 if (inside) {
-                    // 抓住框：记录手指相对框左上角的偏移。
+                    dragging = true
+                    parent?.requestDisallowInterceptTouchEvent(true)
                     dragDx = event.x - boxLeft
                     dragDy = event.y - boxTop
-                } else {
-                    // 框外：以触点为框中心立即跳转。
-                    dragDx = vpW * sx / 2f
-                    dragDy = vpH * sy / 2f
-                    moveBoxTo(event.x, event.y, sx, sy)
                 }
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                if (!dragging) return false
+                if (longPressPending && hypot(event.x - downX, event.y - downY) > touchSlop) {
+                    removeCallbacks(longPressRunnable)
+                    longPressPending = false
+                }
+                if (!dragging) return true
                 moveBoxTo(event.x, event.y, sx, sy)
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                removeCallbacks(longPressRunnable)
+                longPressPending = false
                 dragging = false
                 parent?.requestDisallowInterceptTouchEvent(false)
                 return true

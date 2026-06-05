@@ -128,6 +128,18 @@ object ConnectionManager {
         connections[session.connectionId]?.sendViewport(session, x, y, w, h)
     }
 
+    fun sendPointerDown(session: Session, x: Int, y: Int) {
+        connections[session.connectionId]?.sendPointerDown(session, x, y)
+    }
+
+    fun sendPointerUp(session: Session, x: Int, y: Int) {
+        connections[session.connectionId]?.sendPointerUp(session, x, y)
+    }
+
+    fun sendPointerScroll(session: Session, dx: Int, dy: Int) {
+        connections[session.connectionId]?.sendPointerScroll(session, dx, dy)
+    }
+
     fun setScreenListener(connectionId: String, listener: ScreenListener?) {
         connections[connectionId]?.screenListener = listener
     }

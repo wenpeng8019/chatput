@@ -436,7 +436,7 @@
             android:id="@+id/minimap"
             android:layout_width="150dp"
             android:layout_height="110dp"
-            android:layout_gravity="top|end"
+            android:layout_gravity="center_vertical|end"
             android:layout_margin="16dp" />
 
         <!-- 顶部收起握把：上滑/下拉可把幕布收起（避开渲染器的视口拖动）。 -->

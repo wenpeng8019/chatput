@@ -41,6 +41,15 @@ enum Wire {
         static let screenMeta = "screen-meta"
         /// 桌面 → 手机：周期性小地图缩略图（二进制帧：header + JPEG）。
         static let screenThumb = "screen-thumb"
+
+        // MARK: 触控转鼠标（2.0）
+
+        /// 手机 → 桌面：鼠标按下（x,y 为窗口逻辑坐标）。
+        static let pointerDown = "pointer-down"
+        /// 手机 → 桌面：鼠标抬起。
+        static let pointerUp = "pointer-up"
+        /// 手机 → 桌面：滚轮（dx,dy 为滚动量）。
+        static let pointerScroll = "pointer-scroll"
     }
 
     /// 信令服务器协议（客户端 ⇄ 信令服务器）。

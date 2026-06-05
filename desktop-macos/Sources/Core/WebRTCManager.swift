@@ -21,6 +21,11 @@ final class WebRTCManager: NSObject {
     var onScreenStop: ((String) -> Void)?
     /// 手机拖动视口（sessionId, x, y, w, h，窗口像素系）。
     var onViewport: ((String, Int, Int, Int, Int) -> Void)?
+    /// 手机 → 桌面：触控转鼠标（sessionId, x, y，窗口逻辑坐标）。
+    var onPointerDown: ((String, Int, Int) -> Void)?
+    var onPointerUp: ((String, Int, Int) -> Void)?
+    /// 手机 → 桌面：触控转滚轮（sessionId, dx, dy）。
+    var onPointerScroll: ((String, Int, Int) -> Void)?
     var onLog: ((String) -> Void)?
 
     private static let factory: RTCPeerConnectionFactory = {
@@ -262,6 +267,18 @@ extension WebRTCManager: RTCDataChannelDelegate {
             let w = (obj["w"] as? NSNumber)?.intValue ?? 0
             let h = (obj["h"] as? NSNumber)?.intValue ?? 0
             onViewport?(sessionId, x, y, w, h)
+        case Wire.Msg.pointerDown:
+            onPointerDown?(obj["sessionId"] as? String ?? "",
+                           (obj["x"] as? NSNumber)?.intValue ?? 0,
+                           (obj["y"] as? NSNumber)?.intValue ?? 0)
+        case Wire.Msg.pointerUp:
+            onPointerUp?(obj["sessionId"] as? String ?? "",
+                         (obj["x"] as? NSNumber)?.intValue ?? 0,
+                         (obj["y"] as? NSNumber)?.intValue ?? 0)
+        case Wire.Msg.pointerScroll:
+            onPointerScroll?(obj["sessionId"] as? String ?? "",
+                             (obj["dx"] as? NSNumber)?.intValue ?? 0,
+                             (obj["dy"] as? NSNumber)?.intValue ?? 0)
         default:
             break
         }

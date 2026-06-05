@@ -20,6 +20,8 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
     var onThumbnail: ((Data) -> Void)?
     /// 元数据：窗口像素尺寸 + 实际生效视口（窗口像素系）。
     var onMeta: ((Int, Int, CGRect) -> Void)?
+    /// 窗口匹配完成后回调（frame + backingScale），供 PointerInjector 初始化。
+    var onWindowReady: ((CGRect, CGFloat) -> Void)?
     var onLog: ((String) -> Void)?
 
     private var stream: SCStream?
@@ -36,6 +38,10 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
     private var sessionId = ""
     /// 当前窗口所在屏幕的 backing scale（retina=2）。供手机做 1:1 缩放换算。
     private(set) var backingScale: CGFloat = 2.0
+    /// 当前采集窗口的 CG 全局 frame（左上原点），供触控转鼠标换算用。
+    private(set) var windowFrame: CGRect = .zero
+    /// 采集内容的物理像素尺寸（含 retina），供计算标题栏偏移。
+    private(set) var contentPixelSize: CGSize = .zero
 
     private var outputPool: CVPixelBufferPool?
     private var poolSize = CGSize.zero
@@ -68,11 +74,14 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
             return
         }
 
+        self.windowFrame = window.frame
         let scale = backingScaleForWindow(window.frame)
         self.backingScale = scale
         let pxW = max(2, Int((window.frame.width * scale).rounded()))
         let pxH = max(2, Int((window.frame.height * scale).rounded()))
         windowPixelSize = CGSize(width: CGFloat(pxW), height: CGFloat(pxH))
+        contentPixelSize = windowPixelSize
+        onWindowReady?(window.frame, scale)
 
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let config = SCStreamConfiguration()

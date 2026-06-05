@@ -10,6 +10,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -193,29 +194,96 @@ class ScreenPanelController(
         queueViewport()
     }
 
-    /** 主画面拖动：手指拖动量换算成窗口像素，反向移动视口（内容跟手）。 */
+    /**
+     * 主画面触控 → 桌面鼠标事件：
+     * - 单击（无拖动）→ pointer-down + pointer-up
+     * - 单指拖动 → 移动视口（原有行为）
+     * - 双指拖动 → 滚轮 scroll
+     */
     private fun setupRendererDrag() {
+        val tapSlop = ViewConfiguration.get(renderer.context).scaledTouchSlop.toFloat()
+        var isTap = false
+        var tapX = 0f
+        var tapY = 0f
+        var scrollBaseY = 0f
+        var scrolling = false
+
         renderer.setOnTouchListener { _, event ->
-            when (event.actionMasked) {
+            when (event.actionMasked and MotionEvent.ACTION_MASK) {
                 MotionEvent.ACTION_DOWN -> {
-                    dragLastX = event.x; dragLastY = event.y; true
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    if (vpW <= 0 || vpH <= 0 || renderer.width == 0 || renderer.height == 0) return@setOnTouchListener true
-                    // SCALE_ASPECT_FIT 等比显示，两轴共用同一缩放系数（含 retina）。
-                    val dispScale = minOf(
-                        renderer.width.toFloat() / vpW,
-                        renderer.height.toFloat() / vpH
-                    )
-                    val dxWin = (event.x - dragLastX) / dispScale
-                    val dyWin = (event.y - dragLastY) / dispScale
                     dragLastX = event.x; dragLastY = event.y
-                    moveViewportTo((vpX - dxWin).toInt(), (vpY - dyWin).toInt())
+                    isTap = true; tapX = event.x; tapY = event.y
+                    scrolling = false
                     true
                 }
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    if (event.pointerCount >= 2) {
+                        scrolling = true; isTap = false
+                        scrollBaseY = (event.getY(0) + event.getY(1)) / 2f
+                    }
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (scrolling && event.pointerCount >= 2) {
+                        val avgY = (event.getY(0) + event.getY(1)) / 2f
+                        val dy = scrollBaseY - avgY
+                        scrollBaseY = avgY
+                        if (kotlin.math.abs(dy) > 1f) {
+                            val dispScale = contentDispScale()
+                            val scrollDy = if (dispScale > 0f) (dy / dispScale).toInt() else 0
+                            if (scrollDy != 0) {
+                                session?.let { ConnectionManager.sendPointerScroll(it, 0, scrollDy) }
+                            }
+                        }
+                    } else if (!scrolling) {
+                        if (kotlin.math.abs(event.x - tapX) > tapSlop ||
+                            kotlin.math.abs(event.y - tapY) > tapSlop) {
+                            isTap = false
+                        }
+                        if (vpW > 0 && vpH > 0 && renderer.width > 0 && renderer.height > 0) {
+                            val dispScale = contentDispScale()
+                            if (dispScale > 0f) {
+                                val dxWin = (event.x - dragLastX) / dispScale
+                                val dyWin = (event.y - dragLastY) / dispScale
+                                dragLastX = event.x; dragLastY = event.y
+                                moveViewportTo((vpX - dxWin).toInt(), (vpY - dyWin).toInt())
+                            }
+                        }
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP -> {
+                    if (isTap) {
+                        val s = session ?: return@setOnTouchListener true
+                        val (wx, wy) = rendererToWindow(tapX, tapY)
+                        ConnectionManager.sendPointerDown(s, wx, wy)
+                        ConnectionManager.sendPointerUp(s, wx, wy)
+                    }
+                    isTap = false; scrolling = false
+                    true
+                }
+                MotionEvent.ACTION_POINTER_UP -> { scrolling = false; true }
+                MotionEvent.ACTION_CANCEL -> { isTap = false; scrolling = false; true }
                 else -> true
             }
         }
+    }
+
+    /** 渲染器视图坐标 → 窗口绝对逻辑坐标。 */
+    private fun rendererToWindow(rx: Float, ry: Float): Pair<Int, Int> {
+        if (vpW <= 0 || vpH <= 0 || renderer.width == 0 || renderer.height == 0) return Pair(0, 0)
+        val dispScale = contentDispScale()
+        val contentLeft = (renderer.width - vpW * dispScale) / 2f
+        val contentTop = (renderer.height - vpH * dispScale) / 2f
+        val wx = ((rx - contentLeft) / dispScale).toInt().coerceIn(0, vpW - 1)
+        val wy = ((ry - contentTop) / dispScale).toInt().coerceIn(0, vpH - 1)
+        return Pair(vpX + wx, vpY + wy)
+    }
+
+    /** SCALE_ASPECT_FIT 渲染的显示缩放系数。 */
+    private fun contentDispScale(): Float {
+        if (vpW <= 0 || vpH <= 0 || renderer.width == 0 || renderer.height == 0) return 0f
+        return minOf(renderer.width.toFloat() / vpW, renderer.height.toFloat() / vpH)
     }
 
     private fun queueViewport() {

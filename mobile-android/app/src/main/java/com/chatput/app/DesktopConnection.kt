@@ -195,6 +195,26 @@ internal class DesktopConnection(
         sendJson(json)
     }
 
+    // 触控转鼠标
+
+    fun sendPointerDown(session: Session, x: Int, y: Int) {
+        if (!isConnected) return
+        sendJson(JSONObject().put("type", "pointer-down")
+            .put("sessionId", session.id).put("x", x).put("y", y))
+    }
+
+    fun sendPointerUp(session: Session, x: Int, y: Int) {
+        if (!isConnected) return
+        sendJson(JSONObject().put("type", "pointer-up")
+            .put("sessionId", session.id).put("x", x).put("y", y))
+    }
+
+    fun sendPointerScroll(session: Session, dx: Int, dy: Int) {
+        if (!isConnected) return
+        sendJson(JSONObject().put("type", "pointer-scroll")
+            .put("sessionId", session.id).put("dx", dx).put("dy", dy))
+    }
+
     fun disconnect() {
         manualDisconnectInProgress = true
         releaseTransports()

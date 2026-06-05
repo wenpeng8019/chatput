@@ -16,6 +16,7 @@ final class Coordinator {
     private let focus = FocusMonitor()
     private let injector = TextInjector()
     private let windowCapturer = WindowCapturer()
+    private let pointerInjector = PointerInjector()
 
     private var roomId = ""
     private var token = ""
@@ -360,6 +361,12 @@ final class Coordinator {
     /// 把采集器的输出接到 WebRTC，并响应手机的开始/停止/视口控制。
     private func wireScreen() {
         windowCapturer.onLog = { [weak self] line in self?.state.log("[screen]", line) }
+        pointerInjector.onLog = { [weak self] line in self?.state.log("[pointer]", line) }
+        windowCapturer.onWindowReady = { [weak self] frame, scale in
+            guard let self = self else { return }
+            let contentLogicalH = self.windowCapturer.contentPixelSize.height / scale
+            self.pointerInjector.updateWindow(frame: frame, scale: scale, contentLogicalH: contentLogicalH)
+        }
         windowCapturer.onFrame = { [weak self] pixelBuffer, ts in
             self?.webrtc.pushVideoFrame(pixelBuffer, timeStampNs: ts)
         }
@@ -392,6 +399,18 @@ final class Coordinator {
         webrtc.onViewport = { [weak self] sessionId, x, y, w, h in
             guard let self = self, sessionId == self.screenSessionId else { return }
             self.windowCapturer.setViewport(x: x, y: y, w: w, h: h)
+        }
+        webrtc.onPointerDown = { [weak self] sessionId, x, y in
+            guard let self = self, sessionId == self.screenSessionId else { return }
+            self.pointerInjector.mouseDown(x: x, y: y)
+        }
+        webrtc.onPointerUp = { [weak self] sessionId, x, y in
+            guard let self = self, sessionId == self.screenSessionId else { return }
+            self.pointerInjector.mouseUp(x: x, y: y)
+        }
+        webrtc.onPointerScroll = { [weak self] sessionId, dx, dy in
+            guard let self = self, sessionId == self.screenSessionId else { return }
+            self.pointerInjector.scroll(dx: dx, dy: dy)
         }
     }
 
