@@ -174,12 +174,13 @@ final class WebRTCManager: NSObject {
         // 锁定输出格式为采集分辨率，禁止 WebRTC 自适应降采样（否则画面发虚）。
         if w != lastAdaptW || h != lastAdaptH {
             lastAdaptW = w; lastAdaptH = h
-            let fps = Int32(AppSettings.shared.screenFPS.value)
-            source.adaptOutputFormat(toWidth: w, height: h, fps: fps)
-            raiseVideoBitrate()
-            // 分辨率变化后重协商 WebRTC 会话，让对端解码器更新尺寸
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                self?.renegotiate()
+            // 先重协商，让对端解码器就绪，再改编码输出尺寸
+            renegotiate()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                guard let self = self else { return }
+                let fps = Int32(AppSettings.shared.screenFPS.value)
+                self.videoSource?.adaptOutputFormat(toWidth: w, height: h, fps: fps)
+                self.raiseVideoBitrate()
             }
         }
         let rtcBuffer = RTCCVPixelBuffer(pixelBuffer: pixelBuffer)
