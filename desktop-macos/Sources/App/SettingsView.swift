@@ -97,6 +97,16 @@ struct SettingsView: View {
                 }
 
                 HStack(spacing: 12) {
+                    Text(L.t("调试热区", "Debug zones"))
+                        .font(.system(size: 12))
+                        .frame(width: 90, alignment: .leading)
+                    Toggle("", isOn: $settings.debugHotZones)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                    Spacer()
+                }
+
+                HStack(spacing: 12) {
                     Text(L.t("语言", "Language"))
                         .font(.system(size: 12))
                         .frame(width: 90, alignment: .leading)
@@ -127,6 +137,33 @@ struct SettingsView: View {
                                         "Capture, encoding and interaction settings for remote screen."))
 
             VStack(alignment: .leading, spacing: 16) {
+                HStack(alignment: .top, spacing: 12) {
+                    Text(L.t("优先编码", "Preferred codec"))
+                        .font(.system(size: 12))
+                        .frame(width: 90, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Picker("", selection: $settings.screenCodec) {
+                                ForEach(ScreenCodec.allCases) { c in
+                                    Text(c.label).tag(c)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 100)
+                            if settings.screenCodec != .h264 {
+                                Text(L.t("移动端不支持时回退到 H.264", "Falls back to H.264 if unsupported"))
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        Text(settings.screenCodec.note)
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                }
+
                 HStack(spacing: 12) {
                     Text(L.t("采集帧率", "FPS"))
                         .font(.system(size: 12))
@@ -138,6 +175,55 @@ struct SettingsView: View {
                     }
                     .labelsHidden()
                     .frame(width: 120)
+                    Spacer()
+                }
+
+                HStack(alignment: .top, spacing: 12) {
+                    Text(L.t("输出分辨率", "Resolution"))
+                        .font(.system(size: 12))
+                        .frame(width: 90, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Picker("", selection: $settings.screenScale) {
+                            ForEach(ScreenScale.allCases) { s in
+                                Text(s.label).tag(s)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 100)
+                        Text(L.t("缩小桌面图像以节省带宽，手机端自动上采样填满画面。",
+                                 "Downscales the desktop image to save bandwidth. The phone upscales to fill the view."))
+                            .font(.system(size: 11))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer()
+                }
+
+                HStack(spacing: 12) {
+                    Text(L.t("画质偏好", "Quality"))
+                        .font(.system(size: 12))
+                        .frame(width: 90, alignment: .leading)
+                    Picker("", selection: $settings.screenQuality) {
+                        ForEach(ScreenQuality.allCases) { q in
+                            Text(q.label).tag(q)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 140)
+                    Spacer()
+                }
+
+                HStack(spacing: 12) {
+                    Text(L.t("固定码率", "Fixed bitrate"))
+                        .font(.system(size: 12))
+                        .frame(width: 90, alignment: .leading)
+                    Toggle("", isOn: $settings.disableDynamicBitrate)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                    Text(L.t("关闭自适应，首帧即清晰",
+                             "Disable adaptive bitrate for sharp first frames."))
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
                     Spacer()
                 }
             }

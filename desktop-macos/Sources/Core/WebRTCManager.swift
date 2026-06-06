@@ -28,11 +28,15 @@ final class WebRTCManager: NSObject {
     var onPointerScroll: ((String, Int, Int) -> Void)?
     var onLog: ((String) -> Void)?
 
+    private static let encoderFactory = FilteredEncoderFactory()
     private static let factory: RTCPeerConnectionFactory = {
         RTCInitializeSSL()
-        let encoder = RTCDefaultVideoEncoderFactory()
         let decoder = RTCDefaultVideoDecoderFactory()
-        return RTCPeerConnectionFactory(encoderFactory: encoder, decoderFactory: decoder)
+        let encoderCodecs = RTCDefaultVideoEncoderFactory.supportedCodecs().map { "\($0.name)" }
+        let decoderCodecs = decoder.supportedCodecs().map { "\($0.name)" }
+        NSLog("[chatput] WebRTC available encoders: \(encoderCodecs.joined(separator: ", "))")
+        NSLog("[chatput] WebRTC available decoders: \(decoderCodecs.joined(separator: ", "))")
+        return RTCPeerConnectionFactory(encoderFactory: encoderFactory, decoderFactory: decoder)
     }()
 
     private var pc: RTCPeerConnection?
@@ -50,6 +54,9 @@ final class WebRTCManager: NSObject {
     // MARK: - 建连
 
     func createConnectionAndOffer() {
+        // 每次建连前更新编码器偏好（设置变更后重连即可切换）。
+        Self.encoderFactory.prefCodec = AppSettings.shared.screenCodec
+
         let config = RTCConfiguration()
         config.iceServers = iceServers
         config.sdpSemantics = .unifiedPlan
@@ -79,7 +86,9 @@ final class WebRTCManager: NSObject {
         let txInit = RTCRtpTransceiverInit()
         txInit.direction = .sendOnly
         txInit.streamIds = ["screen"]
-        pc.addTransceiver(with: track, init: txInit)
+        let _ = pc.addTransceiver(with: track, init: txInit)
+        // 提前设好码率，避免首帧 ramp-up 导致模糊。
+        DispatchQueue.main.async { [weak self] in self?.raiseVideoBitrate() }
 
         pc.offer(for: constraints) { [weak self] sdp, error in
             guard let self = self, let sdp = sdp else {
@@ -157,7 +166,9 @@ final class WebRTCManager: NSObject {
 
     /// 把一帧采集到的窗口子区域画面喂入预协商的视频轨。
     func pushVideoFrame(_ pixelBuffer: CVPixelBuffer, timeStampNs: Int64) {
-        guard let source = videoSource, let capturer = videoCapturer else { return }
+        guard let source = videoSource, let capturer = videoCapturer else {
+            onLog?("pushVideoFrame: source or capturer nil"); return
+        }
         let w = Int32(CVPixelBufferGetWidth(pixelBuffer))
         let h = Int32(CVPixelBufferGetHeight(pixelBuffer))
         // 锁定输出格式为采集分辨率，禁止 WebRTC 自适应降采样（否则画面发虚）。
@@ -166,23 +177,42 @@ final class WebRTCManager: NSObject {
             let fps = Int32(AppSettings.shared.screenFPS.value)
             source.adaptOutputFormat(toWidth: w, height: h, fps: fps)
             raiseVideoBitrate()
+            // 分辨率变化后重协商 WebRTC 会话，让对端解码器更新尺寸
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.renegotiate()
+            }
         }
         let rtcBuffer = RTCCVPixelBuffer(pixelBuffer: pixelBuffer)
         let frame = RTCVideoFrame(buffer: rtcBuffer, rotation: ._0, timeStampNs: timeStampNs)
         source.capturer(capturer, didCapture: frame)
     }
 
-    /// 抬高视频发送码率上限，避免文字画面被压糊。
+    /// 抬高视频发送码率上限，避免文字画面被压糊；按设置控制画质降级。
     private func raiseVideoBitrate() {
         guard let pc = pc else { return }
         guard let sender = pc.senders.first(where: { $0.track?.kind == "video" }) else { return }
         let params = sender.parameters
         for encoding in params.encodings {
-            encoding.maxBitrateBps = NSNumber(value: 8_000_000)   // 8 Mbps
-            encoding.minBitrateBps = NSNumber(value: 1_500_000)
+            encoding.maxBitrateBps = NSNumber(value: 8_000_000)
+            encoding.minBitrateBps = NSNumber(value: 4_000_000)
             encoding.maxFramerate = NSNumber(value: AppSettings.shared.screenFPS.value)
         }
+        let quality = AppSettings.shared.screenQuality
+        params.degradationPreference = NSNumber(value:
+            quality == .disabled ? 0 : (quality == .balanced ? 1 : 2))
         sender.parameters = params
+    }
+
+    /// 分辨率变化后重协商 SDP，让对端解码器更新尺寸。
+    private func renegotiate() {
+        guard let pc = pc else { return }
+        let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
+        pc.offer(for: constraints) { [weak self] sdp, error in
+            guard let self = self, let sdp = sdp else { return }
+            pc.setLocalDescription(sdp) { _ in
+                self.onLocalSignal?(["sdp": ["type": RTCSessionDescription.string(for: sdp.type), "sdp": sdp.sdp]])
+            }
+        }
     }
 
     /// 关闭当前连接与通道（重连/切换配置时调用）。
@@ -283,5 +313,41 @@ extension WebRTCManager: RTCDataChannelDelegate {
         default:
             break
         }
+    }
+}
+
+/// 包装 RTCDefaultVideoEncoderFactory，按用户偏好只暴露指定编码器。
+/// supportedCodecs() 只返回首选编码器，SDP offer 中将仅包含该 codec。
+final class FilteredEncoderFactory: NSObject, RTCVideoEncoderFactory {
+    var prefCodec: ScreenCodec = AppSettings.shared.screenCodec
+    private let inner = RTCDefaultVideoEncoderFactory()
+
+    private var prefName: String {
+        switch prefCodec {
+        case .h264: return "H264"
+        case .vp8:  return "VP8"
+        case .vp9:  return "VP9"
+        }
+    }
+
+    func supportedCodecs() -> [RTCVideoCodecInfo] {
+        let all = inner.supportedCodecs()
+        // 偏好编码器排到首位；禁止动态码率时注入 startBitrate 跳过 BWE 爬升。
+        if let preferred = all.first(where: { $0.name == prefName }) {
+            var modified = preferred
+            if AppSettings.shared.disableDynamicBitrate {
+                var params = preferred.parameters
+                params["startBitrate"] = "4000" // kbps
+                modified = RTCVideoCodecInfo(name: preferred.name, parameters: params)
+            }
+            var reordered = all.filter { $0.name != prefName }
+            reordered.insert(modified, at: 0)
+            return reordered
+        }
+        return all
+    }
+
+    func createEncoder(_ info: RTCVideoCodecInfo) -> RTCVideoEncoder? {
+        inner.createEncoder(info)
     }
 }

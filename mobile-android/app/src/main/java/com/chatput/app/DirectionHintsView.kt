@@ -62,11 +62,13 @@ class DirectionHintsView @JvmOverloads constructor(
     private var farAlpha = 0f        // 连续态第二点可见度
     private var contFrac = 0f        // 连续态进度，驱动 chevron 外移
     private var rootAlpha = 1f       // 说话时整体淡出
+    private var dotAlpha = 1f        // 圆点可见度（dpad 模式时→0）
 
     private var upDownAnim: ValueAnimator? = null
     private var leftRightAnim: ValueAnimator? = null
     private var farAnim: ValueAnimator? = null
     private var contAnim: ValueAnimator? = null
+    private var dotAnim: ValueAnimator? = null
     private var rootAnim: ValueAnimator? = null
 
     /**
@@ -76,14 +78,20 @@ class DirectionHintsView @JvmOverloads constructor(
      * @param vertical   光标模式且为垂直切行（否则水平移光标）
      * @param continuous 处于连续触发
      */
-    fun setState(talking: Boolean, cursorMode: Boolean, vertical: Boolean, continuous: Boolean) {
-        val horizontalActive = cursorMode && !vertical
-        val verticalActive = cursorMode && vertical
+    fun setState(talking: Boolean, cursorMode: Boolean, vertical: Boolean, continuous: Boolean, dpadMode: Boolean = false) {
+        val horizontalActive = if (dpadMode) false else cursorMode && !vertical
+        val verticalActive = if (dpadMode) false else cursorMode && vertical
         upDownAnim = animateTo(upDownAnim, upDownAlpha, if (horizontalActive) 0f else 1f) { upDownAlpha = it }
         leftRightAnim = animateTo(leftRightAnim, leftRightAlpha, if (verticalActive) 0f else 1f) { leftRightAlpha = it }
         farAnim = animateTo(farAnim, farAlpha, if (continuous && !verticalActive) 1f else 0f) { farAlpha = it }
         contAnim = animateTo(contAnim, contFrac, if (continuous) 1f else 0f) { contFrac = it }
         rootAnim = animateTo(rootAnim, rootAlpha, if (talking) 0f else 1f) { rootAlpha = it }
+        val targetDot = if (dpadMode || talking) 0f else 1f
+        android.util.Log.d("chatput-dots", "setState dpad=$dpadMode talking=$talking targetDot=$targetDot dotAlpha=$dotAlpha")
+        dotAnim?.cancel(); dotAnim = null
+        if (dotAlpha != targetDot) {
+            dotAlpha = targetDot; invalidate()
+        }
     }
 
     private fun animateTo(
@@ -116,9 +124,9 @@ class DirectionHintsView @JvmOverloads constructor(
         // 左右 chevron
         drawChevron(canvas, cx - hR, cy, Dir.LEFT, leftRightAlpha * rootAlpha)
         drawChevron(canvas, cx + hR, cy, Dir.RIGHT, leftRightAlpha * rootAlpha)
-        // 常驻近点
-        drawDot(canvas, cx - dotNear, cy, leftRightAlpha * rootAlpha)
-        drawDot(canvas, cx + dotNear, cy, leftRightAlpha * rootAlpha)
+        // 常驻近点（dpad 模式由 dotAlpha 控制隐藏）
+        drawDot(canvas, cx - dotNear, cy, dotAlpha * rootAlpha)
+        drawDot(canvas, cx + dotNear, cy, dotAlpha * rootAlpha)
         // 连续态第二点
         drawDot(canvas, cx - dotFar, cy, farAlpha * rootAlpha)
         drawDot(canvas, cx + dotFar, cy, farAlpha * rootAlpha)

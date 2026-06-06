@@ -30,9 +30,11 @@ class ScreenCurtainController(
 ) {
     private val touchSlop = ViewConfiguration.get(panel.context).scaledTouchSlop
     private var panelHeight = 0f
-    private var opened = false
+    val opened: Boolean get() = internalOpened
+    private var internalOpened = false
     private var animator: ValueAnimator? = null
     private var keyboardLift = 0f
+    private val collapseZones = mutableListOf<View>()
 
     init {
         panel.post { measureAndHide() }
@@ -53,10 +55,10 @@ class ScreenCurtainController(
         syncShadow()
     }
 
-    /** 幕布底边随面板移动，投影贴在底边下方。 */
+    /** 幕布底边随面板移动。投影与收起热区都需跟随面板的 translationY。 */
     private fun syncShadow() {
-        // 投影 View 已约束在面板「布局底边」处，跟随面板同样的 translationY 即贴在可见底边下。
         shadow.translationY = panel.translationY
+        collapseZones.forEach { it.translationY = panel.translationY }
     }
 
     private fun progress(): Float {
@@ -158,6 +160,8 @@ class ScreenCurtainController(
      * 仅在 [opened] 时接管；收起态不拦截，保持 hint 原有行为。
      */
     fun bindCollapseZone(zone: View) {
+        collapseZones.add(zone)
+        zone.visibility = if (internalOpened) View.VISIBLE else View.GONE
         zone.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
@@ -178,9 +182,14 @@ class ScreenCurtainController(
                         ensureVisible()
                     }
                     if (collapseTracking) {
-                        setTranslation((0f + dy).coerceIn(-panelHeight, 0f))
-                        true
-                    } else false
+                        val base = when {
+                            keyboardLift > 0f -> -keyboardLift
+                            opened -> 0f
+                            else -> -panelHeight
+                        }
+                        setTranslation((base + dy).coerceIn(-panelHeight, 0f))
+                    }
+                    true  // 始终 true，否则未超阈值时返回 false 会终止手势流
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                     val tracked = collapseTracking
@@ -189,7 +198,12 @@ class ScreenCurtainController(
                     val vy = collapseVelocity?.yVelocity ?: 0f
                     collapseVelocity?.recycle(); collapseVelocity = null
                     collapseTracking = false
-                    if (tracked) { settle(vy); true } else false
+                    if (tracked) {
+                        if (collapseDownY - event.rawY > 50f * panel.resources.displayMetrics.density) {
+                            close()
+                        } else { settle(vy) }
+                        true
+                    } else false
                 }
                 else -> false
             }
@@ -223,10 +237,37 @@ class ScreenCurtainController(
             val inputTop = rootHeight - imeBottom - inputHeight
             (panelHeight - inputTop).coerceAtLeast(0f)
         } else 0f
+        updateCollapseZoneHeight()
         if (opened && !headerTracking && !grabTracking && !collapseTracking && animator?.isRunning != true) {
             panel.translationY = -keyboardLift
             syncShadow()
         }
+    }
+
+    private val Int.dp: Int get() = (this * panel.resources.displayMetrics.density).toInt()
+
+    /** 实测幕布底边到 composer 顶部的像素距离（即 hint 区域高度）。 */
+    private fun hintAreaHeight(): Int {
+        val parent = panel.parent as? android.view.ViewGroup ?: return 0
+        var composerTop = 0
+        var panelBottom = 0
+        for (i in 0 until parent.childCount) {
+            val c = parent.getChildAt(i)
+            if (c.id == R.id.composer_card) composerTop = c.top
+            if (c.id == R.id.screen_panel) panelBottom = c.bottom
+        }
+        return if (composerTop > 0 && panelBottom > 0) composerTop - panelBottom else 0
+    }
+
+    /** 根据当前键盘状态更新 collapse_zone 高度。需在 panel layout 完成后调用。 */
+    private fun updateCollapseZoneHeight() {
+        val gap = hintAreaHeight()
+        val zoneH = if (keyboardLift <= 0f) {
+            if (gap > 0) 10.dp + gap else 72.dp
+        } else 20.dp
+        android.util.Log.d("chatput-curtain", "zoneH keyboardLift=$keyboardLift " +
+            "panel.bottom=${panel.bottom} gap=$gap zoneH=$zoneH")
+        collapseZones.forEach { it.layoutParams = it.layoutParams.apply { height = zoneH } }
     }
 
     /** 松手后按位置/速度吸附到打开或收起。 */
@@ -241,18 +282,22 @@ class ScreenCurtainController(
     }
 
     fun open() {
+        collapseZones.forEach { it.visibility = View.VISIBLE }
         ensureVisible()
         // 若键盘已经弹出，动画目标直接定在输入框上方，避免先滑到 0 再跳。
         val target = if (keyboardLift > 0f) -keyboardLift else 0f
         animateTo(target) {
-            opened = true
+            internalOpened = true
             controller.start()
         }
+        // 等 panel layout 完成后再测量 zone 高度（刚 VISIBLE 时 panel.bottom 还是 0）
+        panel.post { updateCollapseZoneHeight() }
     }
 
     fun close() {
+        collapseZones.forEach { it.visibility = View.GONE }
         ensureVisible()
-        opened = false
+        internalOpened = false
         controller.stop()
         animateTo(-panelHeight) {
             panel.visibility = View.GONE

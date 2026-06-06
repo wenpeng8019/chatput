@@ -38,5 +38,6 @@ enum AppConfig {
         static let rightArrow: CGKeyCode = 124
         static let downArrow: CGKeyCode = 125
         static let upArrow: CGKeyCode = 126
+        static let escape: CGKeyCode = 53
     }
 }

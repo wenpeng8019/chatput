@@ -21,6 +21,7 @@ interface ScreenListener {
     fun onVideoTrack(track: VideoTrack)
     fun onThumbnail(sessionId: String, jpeg: ByteArray)
     fun onMeta(sessionId: String, winW: Int, winH: Int, scale: Float, x: Int, y: Int, w: Int, h: Int)
+    fun onScreenError(sessionId: String, message: String)
 }
 
 internal class DesktopConnection(
@@ -420,9 +421,12 @@ internal class DesktopConnection(
             "session-closed" -> removeSession(msg.optString("sessionId"))
             "session-input-lost" -> {
                 val sid = msg.optString("sessionId")
+                android.util.Log.d("chatput-input", "got session-input-lost sid=$sid found=${sessions.firstOrNull { it.id == sid }?.id}")
                 sessions.firstOrNull { it.id == sid }?.inputAvailable = false
                 notifySessions()
             }
+            "screen-error" -> screenListener?.onScreenError(
+                msg.optString("sessionId"), msg.optString("message", "采集失败"))
             "screen-meta" -> handleScreenMeta(msg)
         }
     }

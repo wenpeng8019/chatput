@@ -51,6 +51,61 @@ enum ScreenFPS: String, CaseIterable, Identifiable {
     var value: Int { Int(rawValue) ?? 24 }
 }
 
+/// 远程桌面视频编码器。
+enum ScreenCodec: String, CaseIterable, Identifiable {
+    case h264
+    case vp8
+    case vp9
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .h264: return "H.264"
+        case .vp8:  return "VP8"
+        case .vp9:  return "VP9"
+        }
+    }
+    var note: String {
+        switch self {
+        case .h264:
+            return L.t("支持硬编码，延迟最低，屏幕文字最清晰。",
+                       "Hardware encode supported. Lowest latency, sharpest text.")
+        case .vp8:
+            return L.t("软编码（libvpx），压缩率比 H.264 低约 15–20%，延迟中等。",
+                       "Software encode (libvpx). ~15-20% worse compression than H.264, moderate latency.")
+        case .vp9:
+            return L.t("软编码（libvpx），压缩率比 H.264 高约 30%，但编码延迟较高，文字可能发糊。",
+                       "Software encode (libvpx). ~30% better compression than H.264, but higher encoding latency. Text may appear soft.")
+        }
+    }
+}
+
+/// 远程桌面输出分辨率缩放（相对于视口原始尺寸）。
+enum ScreenScale: String, CaseIterable, Identifiable {
+    case p100 = "100"
+    case p80 = "80"
+    case p75 = "75"
+    case p60 = "60"
+    case p50 = "50"
+    var id: String { rawValue }
+    var label: String { "\(rawValue)%" }
+    var factor: CGFloat { CGFloat(Int(rawValue) ?? 100) / 100.0 }
+}
+
+/// 远程桌面画质偏好。disabled=画质优先不降级。
+enum ScreenQuality: String, CaseIterable, Identifiable {
+    case disabled
+    case maintainResolution
+    case balanced
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .disabled:            return L.t("画质优先", "Quality first")
+        case .maintainResolution:  return L.t("保持分辨率", "Keep resolution")
+        case .balanced:            return L.t("平衡", "Balanced")
+        }
+    }
+}
+
 /// 拖动光标上/下移到首行或末行边界时的行为。
 /// macOS 原生在首行再上移会跳到全文开头、末行再下移会跳到全文结尾。
 enum CursorBoundaryMode: String, CaseIterable, Identifiable {
@@ -93,6 +148,11 @@ final class AppSettings: ObservableObject {
         static let externalURL = "signaling.externalURL"
         static let language = "app.language"
         static let screenFPS = "screen.fps"
+        static let screenCodec = "screen.codec"
+        static let screenScale = "screen.scale"
+        static let debugHotZones = "debug.hotZones"
+        static let disableDynamicBitrate = "screen.disableDynamicBitrate"
+        static let screenQuality = "screen.quality"
         static let cursorBoundary = "cursor.boundaryMode"
     }
 
@@ -124,7 +184,27 @@ final class AppSettings: ObservableObject {
         didSet { defaults.set(language.rawValue, forKey: Key.language) }
     }
     /// 拖动光标到首/末行边界时的行为。
-    /// 远程桌面采集帧率（默认 24）。
+    /// 调试：用半透明颜色显示所有隐藏热区。
+    @Published var debugHotZones: Bool {
+        didSet { defaults.set(debugHotZones, forKey: Key.debugHotZones) }
+    }
+    /// 禁用 WebRTC 动态码率调整，直接以目标码率编码（默认关闭=自适应）。
+    @Published var disableDynamicBitrate: Bool {
+        didSet { defaults.set(disableDynamicBitrate, forKey: Key.disableDynamicBitrate) }
+    }
+    /// 远程桌面输出分辨率缩放（默认 100%=原始尺寸）。
+    @Published var screenScale: ScreenScale {
+        didSet { defaults.set(screenScale.rawValue, forKey: Key.screenScale) }
+    }
+    /// 远程桌面视频编码器（默认 H.264）。
+    @Published var screenCodec: ScreenCodec {
+        didSet { defaults.set(screenCodec.rawValue, forKey: Key.screenCodec) }
+    }
+    /// 远程桌面画质偏好（默认 disabled=画质优先）。
+    @Published var screenQuality: ScreenQuality {
+        didSet { defaults.set(screenQuality.rawValue, forKey: Key.screenQuality) }
+    }
+    /// 远程桌面采集帧率（默认 18）。
     @Published var screenFPS: ScreenFPS {
         didSet { defaults.set(screenFPS.rawValue, forKey: Key.screenFPS) }
     }
@@ -151,6 +231,14 @@ final class AppSettings: ObservableObject {
         defaults.set(normalizedExternalURL, forKey: Key.externalURL)
         let lang = defaults.string(forKey: Key.language) ?? AppLanguage.system.rawValue
         language = AppLanguage(rawValue: lang) ?? .system
+        debugHotZones = defaults.bool(forKey: Key.debugHotZones)
+        disableDynamicBitrate = defaults.bool(forKey: Key.disableDynamicBitrate)
+        let scaleRaw = defaults.string(forKey: Key.screenScale) ?? ScreenScale.p100.rawValue
+        screenScale = ScreenScale(rawValue: scaleRaw) ?? .p100
+        let codecRaw = defaults.string(forKey: Key.screenCodec) ?? ScreenCodec.h264.rawValue
+        screenCodec = ScreenCodec(rawValue: codecRaw) ?? .h264
+        let qualRaw = defaults.string(forKey: Key.screenQuality) ?? ScreenQuality.disabled.rawValue
+        screenQuality = ScreenQuality(rawValue: qualRaw) ?? .disabled
         let fpsRaw = defaults.string(forKey: Key.screenFPS) ?? ScreenFPS.fps18.rawValue
         screenFPS = ScreenFPS(rawValue: fpsRaw) ?? .fps18
         let boundaryRaw = defaults.string(forKey: Key.cursorBoundary) ?? CursorBoundaryMode.native.rawValue

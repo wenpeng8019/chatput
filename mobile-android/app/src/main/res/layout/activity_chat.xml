@@ -474,12 +474,13 @@
     <View
         android:id="@+id/screen_collapse_zone"
         android:layout_width="0dp"
-        android:layout_height="0dp"
+        android:layout_height="20dp"
+        android:clickable="true"
+        android:focusable="true"
         android:contentDescription="上滑收起画面"
         android:layout_marginTop="-10dp"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/screen_panel"
-        app:layout_constraintBottom_toTopOf="@id/composer_card" />
+        app:layout_constraintTop_toBottomOf="@id/screen_panel" />
 
 </androidx.constraintlayout.widget.ConstraintLayout>

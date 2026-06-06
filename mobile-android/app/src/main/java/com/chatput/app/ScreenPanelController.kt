@@ -60,6 +60,9 @@ class ScreenPanelController(
     private var vpW = 0
     private var vpH = 0
     private var viewportInited = false
+    private var displayScale = 1.0f  // 1.0=原始, 0.9/0.8/0.75=缩小
+    private val rendererLongPress = Runnable { showScaleMenu() }
+    private var rendererLpPending = false
 
     // 主画面拖动状态
     private var dragLastX = 0f
@@ -152,6 +155,16 @@ class ScreenPanelController(
         }
     }
 
+    override fun onScreenError(sessionId: String, message: String) {
+        main.post {
+            if (released) return@post
+            stop()
+            statusLabel.text = message
+            statusLabel.visibility = View.VISIBLE
+            cover.visibility = View.VISIBLE
+        }
+    }
+
     override fun onMeta(sessionId: String, winW: Int, winH: Int, scale: Float, x: Int, y: Int, w: Int, h: Int) {
         if (sessionId != session?.id) return
         main.post {
@@ -178,8 +191,11 @@ class ScreenPanelController(
         val rh = renderer.height
         if (rw <= 0 || rh <= 0 || winW <= 0 || winH <= 0) return
         val density = renderer.resources.displayMetrics.density.coerceAtLeast(1f)
-        vpW = (rw / density).toInt().coerceIn(1, winW)
-        vpH = (rh / density).toInt().coerceIn(1, winH)
+        val rawW = (rw / density / displayScale).toInt().coerceAtLeast(1)
+        val rawH = (rh / density / displayScale).toInt().coerceAtLeast(1)
+        val fit = minOf(winW.toFloat() / rawW, winH.toFloat() / rawH, 1.0f)
+        vpW = (rawW * fit).toInt().coerceIn(1, winW)
+        vpH = (rawH * fit).toInt().coerceIn(1, winH)
         vpX = (winW - vpW).coerceAtLeast(0).toFloat()
         vpY = (winH - vpH).coerceAtLeast(0).toFloat()
         Log.d(TAG, "initVp renderer=${rw}x${rh} density=$density -> vp=($vpX,$vpY ${vpW}x$vpH) win=${winW}x${winH}")
@@ -215,6 +231,8 @@ class ScreenPanelController(
                     dragLastX = event.x; dragLastY = event.y
                     isTap = true; tapX = event.x; tapY = event.y
                     scrolling = false
+                    rendererLpPending = true
+                    main.postDelayed(rendererLongPress, 600)
                     true
                 }
                 MotionEvent.ACTION_POINTER_DOWN -> {
@@ -225,6 +243,9 @@ class ScreenPanelController(
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    if (rendererLpPending && (kotlin.math.abs(event.x - tapX) > tapSlop || kotlin.math.abs(event.y - tapY) > tapSlop)) {
+                        main.removeCallbacks(rendererLongPress); rendererLpPending = false
+                    }
                     if (scrolling && event.pointerCount >= 2) {
                         val avgY = (event.getY(0) + event.getY(1)) / 2f
                         val dy = scrollBaseY - avgY
@@ -254,6 +275,7 @@ class ScreenPanelController(
                     true
                 }
                 MotionEvent.ACTION_UP -> {
+                    if (rendererLpPending) { main.removeCallbacks(rendererLongPress); rendererLpPending = false }
                     if (isTap) {
                         val s = session ?: return@setOnTouchListener true
                         val (wx, wy) = rendererToWindow(tapX, tapY)
@@ -264,7 +286,7 @@ class ScreenPanelController(
                     true
                 }
                 MotionEvent.ACTION_POINTER_UP -> { scrolling = false; true }
-                MotionEvent.ACTION_CANCEL -> { isTap = false; scrolling = false; true }
+                MotionEvent.ACTION_CANCEL -> { isTap = false; scrolling = false; main.removeCallbacks(rendererLongPress); rendererLpPending = false; true }
                 else -> true
             }
         }
@@ -308,6 +330,7 @@ class ScreenPanelController(
     // 缩略图位置
 
     private fun showPositionPicker() {
+        minimap.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
         val ctx = minimap.context
         val content = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
@@ -343,6 +366,50 @@ class ScreenPanelController(
             lp.gravity = pos.gravity
             minimap.layoutParams = lp
         }
+    }
+
+    // 显示缩放菜单
+
+    private fun showScaleMenu() {
+        val ctx = renderer.context
+        val content = LinearLayout(ctx).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(8.dp, 8.dp, 8.dp, 8.dp)
+        }
+        val popup = PopupWindow(content, ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, true)
+        popup.isOutsideTouchable = true
+        popup.setBackgroundDrawable(ColorDrawable(Color.parseColor("#CC1C1C1E")))
+
+        floatArrayOf(1.0f, 0.9f, 0.8f, 0.75f).forEach { s ->
+            val label = TextView(ctx).apply {
+                text = if (s == 1.0f) "1:1" else "%.2f".format(s)
+                textSize = 14f; setTextColor(Color.WHITE); setPadding(16.dp, 10.dp, 16.dp, 10.dp)
+                if (s == displayScale) setTextColor(Color.parseColor("#FF007AFF"))
+            }
+            label.setOnClickListener { popup.dismiss(); applyScale(s) }
+            content.addView(label)
+        }
+        content.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+        popup.showAsDropDown(renderer, renderer.width - content.measuredWidth - 16.dp, -content.measuredHeight - 16.dp)
+    }
+
+    private fun applyScale(scale: Float) {
+        displayScale = scale
+        val rw = renderer.width; val rh = renderer.height
+        if (rw <= 0 || rh <= 0 || winW <= 0 || winH <= 0) return
+        val density = renderer.resources.displayMetrics.density.coerceAtLeast(1f)
+        val rawW = (rw / density / scale).toInt().coerceAtLeast(1)
+        val rawH = (rh / density / scale).toInt().coerceAtLeast(1)
+        val fit = minOf(winW.toFloat() / rawW, winH.toFloat() / rawH, 1.0f)
+        val newW = (rawW * fit).toInt().coerceIn(1, winW)
+        val newH = (rawH * fit).toInt().coerceIn(1, winH)
+        val newX = (winW - newW).coerceAtLeast(0)
+        val newY = (winH - newH).coerceAtLeast(0)
+        val cx = vpX + vpW / 2f; val cy = vpY + vpH / 2f  // 旧视口中心
+        vpW = newW; vpH = newH
+        vpX = (cx - newW / 2f).coerceIn(0f, (winW - newW).coerceAtLeast(0).toFloat())
+        vpY = (cy - newH / 2f).coerceIn(0f, (winH - newH).coerceAtLeast(0).toFloat())
+        minimap.setMeta(winW, winH, vpX.toInt(), vpY.toInt(), vpW, vpH)
+        sendViewportNow()
     }
 
     private val Int.dp: Int get() = (this * renderer.resources.displayMetrics.density).toInt()

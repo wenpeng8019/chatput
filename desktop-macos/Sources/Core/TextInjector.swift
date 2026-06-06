@@ -46,6 +46,8 @@ final class TextInjector {
         case cursorRight // 光标右移一个字符
         case cursorUp    // 光标上移一行
         case cursorDown  // 光标下移一行
+        case escape      // ESC 键
+        case undo        // Cmd+Z 撤销
     }
 
     /// 执行一个操作。
@@ -54,7 +56,7 @@ final class TextInjector {
         case .enter:
             tapKey(AppConfig.KeyCode.return)
         case .shiftEnter:
-            tapKey(AppConfig.KeyCode.return, flags: .maskShift)   // Shift+Return
+            tapKey(AppConfig.KeyCode.return, flags: .maskShift)
         case .backspace:
             tapKey(AppConfig.KeyCode.delete)
         case .selectAll:
@@ -70,6 +72,10 @@ final class TextInjector {
             moveVertically(up: true)
         case .cursorDown:
             moveVertically(up: false)
+        case .escape:
+            tapKey(AppConfig.KeyCode.escape)
+        case .undo:
+            tapKey(6, flags: .maskCommand)  // Cmd+Z
         }
     }
 

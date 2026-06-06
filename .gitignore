@@ -46,4 +46,6 @@ desktop-macos/Frameworks/WebRTC.xcframework/
 desktop-windows/.cargo/
 desktop-windows/Cargo.lock
 desktop-windows/target*/
+PITFALL.md
+CLAUDE.md
 screen.png

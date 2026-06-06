@@ -33,6 +33,8 @@ final class Coordinator {
     // 远程窗口画面（2.0）：当前正在采集的会话与上次下发的生效视口（用于节流 meta）。
     private var screenSessionId = ""
     private var lastAppliedViewport = CGRect.zero
+    /// 重连前保存的屏幕会话（供断连恢复后重建采集）。
+    private var pendingScreenSession: (id: String, vpW: Int, vpH: Int)?
 
     private var transport: TransportMode { settings.transport }
 
@@ -130,6 +132,12 @@ final class Coordinator {
     private func restart() {
         reconnectWorkItem?.cancel()
         networkChangeWorkItem?.cancel()
+        // 保存当前屏幕会话，供重连后自动恢复。
+        if !screenSessionId.isEmpty {
+            pendingScreenSession = (id: screenSessionId,
+                vpW: windowCapturer.currentViewportW,
+                vpH: windowCapturer.currentViewportH)
+        }
         stopScreenCapture(sessionId: "")
         signaling.close()
         webrtc.close()
@@ -335,7 +343,15 @@ final class Coordinator {
         }
         // DataChannel 真正可发时补发当前焦点会话（首次连通瞬间通道可能尚未 open）。
         webrtc.onChannelOpen = { [weak self] in
-            self?.focus.ensureCurrentDelivered()
+            guard let self = self else { return }
+            self.focus.ensureCurrentDelivered()
+            // 断连恢复后重建屏幕采集。
+            if let pending = self.pendingScreenSession, !pending.id.isEmpty {
+                self.pendingScreenSession = nil
+                self.state.log("[screen] reconnect restore:", pending.id)
+                self.startScreenCapture(sessionId: pending.id,
+                                        viewportW: pending.vpW, viewportH: pending.vpH)
+            }
         }
         webrtc.onText = { [weak self] text in
             self?.state.log("recv text:", text)
@@ -362,6 +378,15 @@ final class Coordinator {
     private func wireScreen() {
         windowCapturer.onLog = { [weak self] line in self?.state.log("[screen]", line) }
         pointerInjector.onLog = { [weak self] line in self?.state.log("[pointer]", line) }
+        windowCapturer.onError = { [weak self] msg in
+            guard let self = self, !self.screenSessionId.isEmpty else { return }
+            self.state.log("[screen] error:", msg)
+            self.sendPeerMessage([
+                Wire.Key.type: Wire.Msg.screenError,
+                "sessionId": self.screenSessionId,
+                "message": msg,
+            ])
+        }
         windowCapturer.onWindowReady = { [weak self] frame, scale in
             guard let self = self else { return }
             let contentLogicalH = self.windowCapturer.contentPixelSize.height / scale

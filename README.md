@@ -95,9 +95,9 @@ export JAVA_HOME=/path/to/JDK
 
 ## 路线图
 - [x] Phase 0：三端最小链路打通（语音→P2P→注入）
-- [ ] Phase 1：IM 界面产品化 + 焦点变化自动建会话
-- [x] Phase 2：体验打磨 + Windows 支持
-- [ ] Phase 3：Tauri 重写桌面端（体积优化）/ 自建 whisper（可选）
+- [x] Phase 1：IM 界面产品化 + 焦点变化自动建会话
+- [x] Phase 2：远程桌面画面（下拉幕布）+ 触控转鼠标 + 缩放 + 编码选项
+- [ ] Phase 3：Windows 远程桌面画面支持 / 自建 whisper / Tauri 重写桌面端（可选）
 
 ## 配置
 所有端的信令地址默认 `ws://localhost:8080`。

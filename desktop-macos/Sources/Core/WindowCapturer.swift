@@ -22,9 +22,12 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
     var onMeta: ((Int, Int, CGRect) -> Void)?
     /// 窗口匹配完成后回调（frame + backingScale），供 PointerInjector 初始化。
     var onWindowReady: ((CGRect, CGFloat) -> Void)?
+    /// 采集失败时回调（如未找到匹配窗口）。
+    var onError: ((String) -> Void)?
     var onLog: ((String) -> Void)?
 
     private var stream: SCStream?
+    private var streamConfig: SCStreamConfiguration?
     private let sampleQueue = DispatchQueue(label: "chatput.window-capture")
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
 
@@ -42,6 +45,17 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
     private(set) var windowFrame: CGRect = .zero
     /// 采集内容的物理像素尺寸（含 retina），供计算标题栏偏移。
     private(set) var contentPixelSize: CGSize = .zero
+    /// 当前生效的视口宽/高（逻辑坐标），供重连后恢复。
+    var currentViewportW: Int { Int(desiredViewport.width) }
+    var currentViewportH: Int { Int(desiredViewport.height) }
+
+    /// 最后一帧原始 CIImage + 尺寸 + 时间戳，供视口变化时立即重裁。
+    private var cachedSrcImage: CIImage?
+    private var cachedSrcW: CGFloat = 0
+    private var cachedSrcH: CGFloat = 0
+    private var cachedSrcTs: Int64 = 0
+    private var viewportChanged = false
+    private var lastFrameTime: CFTimeInterval = 0
 
     private var outputPool: CVPixelBufferPool?
     private var poolSize = CGSize.zero
@@ -70,7 +84,9 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         self.viewportOrigin = .zero
 
         guard let window = await matchWindow(app: app, title: title) else {
-            onLog?("窗口采集：未匹配到窗口 \(app) - \(title)")
+            let msg = "窗口采集：未匹配到窗口 \(app) - \(title)"
+            onLog?(msg)
+            onError?(msg)
             return
         }
 
@@ -92,6 +108,7 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         config.showsCursor = true
         config.minimumFrameInterval = CMTime(value: 1, timescale: Int32(AppSettings.shared.screenFPS.value))
 
+        streamConfig = config
         let s = SCStream(filter: filter, configuration: config, delegate: self)
         do {
             try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
@@ -122,11 +139,39 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     /// 更新视口（逻辑坐标 points，左上角原点）。下一帧即生效。
+    /// 静止画面下强制 SCStream 重采一帧 + 缓存重裁双保险。
     func setViewport(x: Int, y: Int, w: Int, h: Int) {
         lock.lock()
         desiredViewport = CGSize(width: CGFloat(max(1, w)), height: CGFloat(max(1, h)))
         viewportOrigin = CGPoint(x: CGFloat(max(0, x)), y: CGFloat(max(0, y)))
+        viewportChanged = true
         lock.unlock()
+        refreshFromCacheIfNeeded()
+    }
+
+    /// 用缓存帧 + 当前视口重裁输出，避免静止画面下视口拖拽不更新。
+    private func refreshFromCacheIfNeeded() {
+        guard viewportChanged, let src = cachedSrcImage else { return }
+        let scale = backingScale
+        let srcW = cachedSrcW; let srcH = cachedSrcH
+        guard srcW > 0, srcH > 0 else { return }
+
+        lock.lock()
+        let physVpW = min(desiredViewport.width * scale, srcW)
+        let physVpH = min(desiredViewport.height * scale, srcH)
+        var physOx = viewportOrigin.x * scale
+        var physOy = viewportOrigin.y * scale
+        physOx = max(0, min(physOx, srcW - physVpW))
+        physOy = max(0, min(physOy, srcH - physVpH))
+        viewportOrigin = CGPoint(x: physOx / scale, y: physOy / scale)
+        let physRect = CGRect(x: physOx, y: physOy, width: physVpW, height: physVpH)
+        viewportChanged = false
+        lock.unlock()
+
+        let outputScale = AppSettings.shared.screenScale.factor
+        if let out = croppedBuffer(from: src, srcHeight: srcH, rect: physRect, outputScale: outputScale) {
+            onFrame?(out, Int64(CACurrentMediaTime() * 1_000_000_000))
+        }
     }
 
     // MARK: - 窗口匹配
@@ -177,6 +222,11 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         if windowPixelSize.width != srcW || windowPixelSize.height != srcH {
             windowPixelSize = CGSize(width: srcW, height: srcH)
         }
+        let ci = CIImage(cvPixelBuffer: src)
+        // 缓存原始帧供视口变化时重裁
+        lastFrameTime = CACurrentMediaTime(); cachedSrcImage = ci; cachedSrcW = srcW; cachedSrcH = srcH
+        cachedSrcTs = Int64(CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer)) * 1_000_000_000)
+        viewportChanged = false
         let scale = backingScale
 
         lock.lock()
@@ -194,10 +244,10 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
                                     width: physVpW / scale, height: physVpH / scale)
         lock.unlock()
 
-        let ci = CIImage(cvPixelBuffer: src)
-        let ts = Int64(CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer)) * 1_000_000_000)
+        let ts = cachedSrcTs
 
-        if let out = croppedBuffer(from: ci, srcHeight: srcH, rect: physRect) {
+        let outputScale = AppSettings.shared.screenScale.factor
+        if let out = croppedBuffer(from: ci, srcHeight: srcH, rect: physRect, outputScale: outputScale) {
             onFrame?(out, ts)
         }
         // 上报逻辑坐标系的窗口尺寸与生效视口，手机端据此做 1:1 计算。
@@ -221,23 +271,26 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
 
     // MARK: - 裁剪 / 缩略图
 
-    /// 把视口子区域裁出并渲染为 1:1 的输出像素缓冲。
-    /// 注意：CIImage 坐标原点在左下角，而视口以左上角为原点，需翻转 Y。
-    private func croppedBuffer(from ci: CIImage, srcHeight: CGFloat, rect: CGRect) -> CVPixelBuffer? {
-        let outW = Int(rect.width.rounded())
-        let outH = Int(rect.height.rounded())
+    /// 把视口子区域裁出，按 outputScale 降采样后输出像素缓冲。
+    private func croppedBuffer(from ci: CIImage, srcHeight: CGFloat, rect: CGRect,
+                                outputScale: CGFloat) -> CVPixelBuffer? {
+        let outW = Int((rect.width * outputScale).rounded())
+        let outH = Int((rect.height * outputScale).rounded())
         guard outW > 0, outH > 0 else { return nil }
         guard let pool = ensurePool(width: outW, height: outH) else { return nil }
 
         let ciY = srcHeight - (rect.origin.y + rect.height)
         let cropRect = CGRect(x: rect.origin.x, y: ciY, width: rect.width, height: rect.height)
-        let cropped = ci.cropped(to: cropRect)
+        var image = ci.cropped(to: cropRect)
             .transformed(by: CGAffineTransform(translationX: -cropRect.origin.x, y: -cropRect.origin.y))
+        if outputScale < 1.0 {
+            image = image.transformed(by: CGAffineTransform(scaleX: outputScale, y: outputScale))
+        }
 
         var pb: CVPixelBuffer?
         CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pb)
         guard let out = pb else { return nil }
-        ciContext.render(cropped, to: out)
+        ciContext.render(image, to: out)
         return out
     }
 

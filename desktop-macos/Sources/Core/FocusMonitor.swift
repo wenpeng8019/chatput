@@ -188,6 +188,7 @@ final class FocusMonitor {
                 onSessionClosed?(sessionId)
             } else if titleGone && hasWindows && !pendingInputLost.contains(sessionId) {
                 // 窗口仍在但当前标题丢失 → input 暂时不可用，不关闭会话。
+                NSLog("[chatput] input-lost: session=\(sessionId) titleGone=\(titleGone) hasWindows=\(hasWindows) canJudge=\(canJudgeWindows)")
                 pendingInputLost.insert(sessionId)
                 onSessionInputLost?(sessionId)
             }
