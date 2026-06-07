@@ -360,21 +360,91 @@
 
 ## 11. 方向交互模式 — D-pad
 
-桌面端发送 `session-input-lost` 时自动切换到方向模式。
+桌面端检测到输入控件暂时不可用（如 AI 弹出确认菜单遮住输入框）时，通过 WebRTC DataChannel 发送 `session-input-lost` 消息。手机端收到后自动从文本交互模式切换到方向交互模式。当输入控件恢复时，桌面发送 `session` 消息，手机切回文本交互模式。
 
-### 11.1 按钮重定义
+### 11.1 触发协议
 
-| 按钮 | 正常功能 | 方向模式功能 | 发送命令 |
-|------|---------|-------------|---------|
-| 中间 | 🎤 语音 | D-pad 四向点击 | `cursorUp/Down/Left/Right` |
-| 左侧 | ⌫ 退格 | Esc | `escape` |
-| 右侧 | ⏎ 回车 | Enter | `enter` |
+| 消息 | 方向 | 含义 |
+|------|------|------|
+| `session-input-lost` | 桌面 → 手机 | 输入控件不可用，切换到方向模式 |
+| `session` | 桌面 → 手机 | 输入控件恢复，切回文本模式 |
 
-方向模式下的 Enter/Esc 不经过 `isInputAvailable()` 检查，直接通过 DataChannel `action` 消息发送至桌面端。
+### 11.2 视觉变化
 
-### 11.2 D-pad 判定
-- 触点相对按钮中心的象限：`|dy| > |dx|` → 上下；否则 → 左右
-- 每次点击发一个方向 + `KEYBOARD_TAP` 触感
+切换时交互操控区（区域 ④）发生以下变化：
+
+```
+文本模式下:                         方向模式下:
+┌─────────────────────────────┐     ┌─────────────────────────────┐
+│  ⌫          🎤          ⏎  │     │  Esc        ✥          Enter │
+│ 退格       语音       回车  │     │                       │
+└─────────────────────────────┘     └─────────────────────────────┘
+  hint: "按住说话"                    hint: "↑↓←→ 移动光标"
+  directionHints: 四向全显           directionHints: 仅上下箭头显
+                                     上拉把手: 隐藏
+```
+
+- **中间按钮**：图标从 `ic_mic`（麦克风）切换为 `ic_dpad`（四向箭头图案，见下图）。
+- **左侧按钮**：图标从 `ic_nav_backspace`（⌫）切换为 `ic_nav_esc`。
+- **右侧按钮**：图标保持 `ic_nav_enter`（⏎），但功能从 Shift+Enter 变为 Enter。
+- **hint 文字**：从「按住说话」切换为「↑↓←→ 移动光标」。
+- **directionHints**：左右圆点隐藏（`dotAlpha → 0`），仅保留上下箭头装饰（暗示可用方向）。
+- **上拉把手**：隐藏（`grabDecor → INVISIBLE`），`dragHandle` 禁用，阻止上拉切换文本输入。
+- **composerCard**：`clipChildren/clipToOutline` 设为 false，允许 D-pad 热区溢出面板边界。
+
+### 11.3 按钮重定义
+
+| 按钮 | 文本模式 | 方向模式 | 发送的 DataChannel 命令 |
+|------|---------|---------|------------------------|
+| 中间 🎤/✥ | 按住说话 + 拖动控光标 | D-pad 四方向点击 | `cursorUp` / `cursorDown` / `cursorLeft` / `cursorRight` |
+| 左侧 ⌫/Esc | 退格（tap）/ 清空（长按） | Esc | `escape` |
+| 右侧 ⏎ | Shift+Enter（tap）/ Enter（长按） | Enter | `enter` |
+
+> 方向模式下的 Enter/Esc 不经过 `isInputAvailable()` 检查，直接通过 DataChannel `action` 消息发送至桌面端 `TextInjector`。
+
+### 11.4 D-pad 触控热区
+
+在中间按钮的四周创建四个 `r × r` 的方形触控热区（`r = buttonWidth / 2`），直接加到 root ConstraintLayout 上，用 `getLocationOnScreen` 计算绝对坐标后通过 `translationX/Y` 落位：
+
+```
+          ┌─────┐
+          │  ↑  │  cursorUp
+          │ r×r │
+  ┌─────┐ ┌─────┐ ┌─────┐
+  │  ←  │ │  ✥  │ │  →  │
+  │ r×r │ │     │ │ r×r │
+  └─────┘ └─────┘ └─────┘
+          ┌─────┐
+          │  ↓  │  cursorDown
+          │ r×r │
+          └─────┘
+```
+
+- 每个热区**不改变中间按钮的视觉布局**，仅作为透明可点击层叠加在按钮周围。
+- 每个热区注册 `OnClickListener`，点击时发送对应的方向命令 + `KEYBOARD_TAP` 触感。
+- 象限判定隐式由四个独立热区完成——触点落在哪个热区就发哪个方向，无需运行时计算象限。
+- 热区尺寸 `r = buttonWidth / 2` 保证了不同设备上的自适应。
+
+### 11.5 按钮事件
+
+| 按钮 | 事件 | 行为 |
+|------|------|------|
+| 左侧（Esc） | Click | `v_haptic()` + `sendAction("escape")` |
+| 右侧（Enter） | Click | `v_haptic()` + `sendAction("enter")` |
+| D-pad 四向热区 | Click | `sendAction(cursorUp/Down/Left/Right)` + `KEYBOARD_TAP` |
+
+- 所有按钮使用 `OnClickListener`（而非 OnTouchListener），每次点击发一条命令。
+- 方向模式下中间麦克风原有的 OnTouchListener 被清除（`setOnTouchListener(null)`）。
+
+### 11.6 切回文本模式
+
+桌面端输入控件恢复后发送新的 `session` 消息，手机端调用 `bindNormalControls()`：
+
+- 恢复按钮图标（麦克风 / 退格 / 回车）
+- 移除所有 D-pad 热区 View（`dpadViews.forEach { remove }`）
+- 恢复 OnTouchListener（`bindVoiceButton()` / `bindBackspaceButton()` / `bindEnterButton()`）
+- 恢复 directionHints 全显状态
+- 恢复上拉把手可见性
 
 ---
 
@@ -389,7 +459,147 @@
 
 ---
 
-## 13. Android 代码架构
+## 13. 协议参考 — DataChannel 消息
+
+所有交互操控区操作通过 WebRTC DataChannel（标签 `"input"`）以 JSON 格式发送。本节仅列与会话交互直接相关的消息，完整的屏幕/视口/触控协议见 `Wire.swift`。
+
+### 13.1 手机 → 桌面
+
+| type | 字段 | 说明 |
+|------|------|------|
+| `text` | `text`, `sessionId` | 语音/文字识别结果，注入到桌面焦点输入框 |
+| `action` | `action`, `sessionId` | 操作命令，见 §13.2 |
+| `hello` | `device` | 连接时上报设备名 |
+
+### 13.2 action 命令枚举
+
+action 字段的值直接对应桌面端 `TextInjector.Action` 枚举：
+
+| action 值 | 桌面端操作 | 触发方式 |
+|-----------|-----------|---------|
+| `enter` | Return 键 | 文本模式长按回车 / 方向模式轻点 Enter |
+| `shiftEnter` | Shift+Return | 文本模式轻点回车 |
+| `backspace` | Delete 键 | 文本模式轻点退格 |
+| `clear` | Cmd+A + Delete | 文本模式长按退格 |
+| `selectAll` | Cmd+A | Header 菜单「全选」 |
+| `undo` | Cmd+Z | Header 菜单「撤销」/ 摇晃 |
+| `escape` | ESC 键 | 方向模式 Ec |
+| `cursorLeft` | ← 键 | 光标模式拖动 / D-pad |
+| `cursorRight` | → 键 | 同上 |
+| `cursorUp` | ↑ 键 | 垂直切行 / D-pad |
+| `cursorDown` | ↓ 键 | 同上 |
+
+### 13.3 桌面 → 手机
+
+| type | 字段 | 说明 |
+|------|------|------|
+| `session` | `sessionId`, `app`, `title`, `device`, `ts` | 焦点窗口变化，创建/更新输入会话 |
+| `session-closed` | `sessionId` | 窗口已关闭，移除会话 |
+| `session-input-lost` | `sessionId` | 窗口仍在但输入控件不可用，切换到方向模式 |
+| `screen-meta` | `sessionId`, `win`, `applied` | 视口元数据（窗口尺寸、生效视口） |
+
+### 13.4 session 生命周期
+
+```
+桌面焦点变化
+  → 新窗口（app+title 未见过）→ 发 session → 手机创建会话，文本模式
+  → 已知窗口恢复焦点 → 发 session → 手机切换至此会话，文本模式
+  → 窗口关闭 → 发 session-closed → 手机移除会话
+  → 窗口仍在但输入控件不可用 → 发 session-input-lost → 手机切方向模式
+  → 输入控件恢复 → 发 session → 手机切回文本模式
+```
+
+> 桌面端通过 `FocusMonitor` 使用 AXObserver 监控焦点变化 + 定时轮询检测窗口关闭和 input-lost 状态。详情见 §15。
+
+---
+
+## 14. 桌面端架构
+
+了解桌面端架构有助于跨平台实现时对齐交互行为。以 macOS 实现为例。
+
+### 14.1 核心类
+
+| 组件 | 职责 |
+|------|------|
+| `FocusMonitor` | AXObserver 监控焦点窗口变化 + 定时轮询检测窗口关闭和 input-lost |
+| `TextInjector` | 接收 action 命令，通过 CGEvent 注入按键到系统 |
+| `WebRTCManager` | DataChannel 消息收发，`onText`/`onAction` 回调 |
+| `Coordinator` | 串联焦点 → 会话分发 → WebRTC 发送的顶层协调器 |
+
+### 14.2 焦点监控机制
+
+`FocusMonitor` 监听：
+- `kAXFocusedUIElementChangedNotification` — 焦点元素变化
+- `kAXFocusedWindowChangedNotification` — 焦点窗口变化
+- `kAXMainWindowChangedNotification` — 主窗口变化
+- `kAXTitleChangedNotification` — 窗口标题变化
+- `NSWorkspace.didActivateApplicationNotification` — 应用切换
+
+每 1 秒轮询检测：
+- 已知窗口是否已关闭 → `session-closed`
+- 窗口仍在但标题丢失（输入控件不可用）→ `session-input-lost`
+- 已 lost 的 session 是否恢复 → 重发 `session`
+
+### 14.3 input-lost 判定逻辑
+
+当轮询发现某已知 session 的窗口标题仍存在于窗口列表中，但该标题的窗口不再可见（`titleGone && hasWindows`），且尚未标记为 pending，则判定为 input-lost。
+
+典型场景：AI 助手的弹出菜单遮住了输入框，导致 AX API 暂时无法读取到输入元素的标题。
+
+### 14.4 按键注入
+
+`TextInjector.tapKey(_:flags:)` 通过 `CGEvent` 向系统注入按键：
+- 使用 `CGEventSource(stateID: .combinedSessionState)`
+- post 到 `.cgAnnotatedSessionEventTap`
+- 需要辅助功能权限（`AXIsProcessTrusted`）
+
+---
+
+## 15. iOS 跨平台实现要点
+
+iOS 端当前仅实现语音面板，需补齐以下功能以对齐 Android。
+
+### 15.1 文本输入模式
+
+- 上拉切换使用 `DragGesture(minimumDistance: 0)` 在顶部四个热区上检测
+- 热区保持静止（`.offset` 后 overlay），避免手势宿主位移导致 SwiftUI 取消/重启手势造成的跳动
+- 文字输入栏为多行 TextField（1–4 行）+ 发送按钮
+- 键盘弹起时通过 `keyboardHeight` 联动，输入栏上移
+
+### 15.2 方向模式
+
+- 检测 `session.inputAvailable == false` → 切换 UI
+- 按钮图标替换、hint 文字替换
+- D-pad 四向热区：用透明 `Color.black.opacity(0.0001)` 方块作为命中区域
+- 方向命令通过 `action` DataChannel 消息发送
+
+### 15.3 视频幕布
+
+- 使用 SwiftUI `offset` 而非 `translationY`（声明式差异）
+- `SurfaceViewRenderer` 对应 iOS 的 `RTCMTLVideoView` 或 `RTCVideoRenderer`
+- 键盘联动用 `.onReceive(keyboardPublisher)` 驱动 offset
+- 收起时隐藏必须用 `if opened { VideoPanel() }`（对应 Android 的 `GONE`）
+
+### 15.4 协议对齐
+
+- 使用同一套 `Wire.Msg` 常量（见 §13）
+- DataChannel 消息 JSON 格式完全对齐
+- 小地图缩略图二进制帧格式一致（`[2 字节 sessionId 长度][sessionId UTF-8][JPEG]`）
+
+### 15.5 平台差异（保留）
+
+| 项 | iOS | Android |
+|----|-----|---------|
+| 面板圆角 | 连续曲率 (squircle) | 标准圆弧 |
+| 角落装饰 | CornerArc 弧线 | 全周描边 |
+| 更多按钮图标 | `⋯` (SF Symbols) | `⋮` (Material) |
+| 触感引擎 | Taptic Engine (`UIImpactFeedbackGenerator`) | `HapticFeedbackConstants` |
+| 录音 | `SFSpeechRecognizer` | sherpa-onnx 本地离线 |
+| D-pad 图标 | SF Symbol `arrow.up.left.and.arrow.down.right` | 自定义 vector drawable |
+
+---
+
+## 16. Android 代码架构
 
 ```
 ChatActivity
