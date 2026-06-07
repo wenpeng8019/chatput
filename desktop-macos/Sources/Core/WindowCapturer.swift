@@ -27,7 +27,6 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
     var onLog: ((String) -> Void)?
 
     private var stream: SCStream?
-    private var streamConfig: SCStreamConfiguration?
     private let sampleQueue = DispatchQueue(label: "chatput.window-capture")
     private let thumbQueue = DispatchQueue(label: "chatput.window-thumb", qos: .utility)
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
@@ -56,7 +55,6 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
     private var cachedSrcH: CGFloat = 0
     private var cachedSrcTs: Int64 = 0
     private var viewportChanged = false
-    private var lastFrameTime: CFTimeInterval = 0
 
     private var outputPool: CVPixelBufferPool?
     private var poolSize = CGSize.zero
@@ -112,7 +110,6 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         config.showsCursor = true
         config.minimumFrameInterval = CMTime(value: 1, timescale: Int32(AppSettings.shared.screenFPS.value))
 
-        streamConfig = config
         let s = SCStream(filter: filter, configuration: config, delegate: self)
         do {
             try s.addStreamOutput(self, type: .screen, sampleHandlerQueue: sampleQueue)
@@ -139,6 +136,7 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         stream = nil
         outputPool = nil
         poolSize = .zero
+        poolCache.removeAll()
         windowPixelSize = .zero
     }
 
@@ -226,8 +224,7 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
             windowPixelSize = CGSize(width: srcW, height: srcH)
         }
         let ci = CIImage(cvPixelBuffer: src)
-        // 缓存原始帧供视口变化时重裁
-        lastFrameTime = CACurrentMediaTime(); cachedSrcImage = ci; cachedSrcW = srcW; cachedSrcH = srcH
+        cachedSrcImage = ci; cachedSrcW = srcW; cachedSrcH = srcH
         cachedSrcTs = Int64(CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer)) * 1_000_000_000)
         let scale = backingScale
 

@@ -265,7 +265,7 @@ extension WebRTCManager: RTCPeerConnectionDelegate {
     }
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
-        // GUEST 不会创建通道；这里一般不触发，但保留以防万一。
+        guard dataChannel.label == Wire.Msg.channelLabel else { return }
         dataChannel.delegate = self
         self.channel = dataChannel
     }

@@ -1,0 +1,1041 @@
+import SwiftUI
+import UIKit
+
+private enum TalkUX {
+    static let cursorActivation: CGFloat = 28
+    static let cursorStep: CGFloat = 24
+    static let swipeTrigger: CGFloat = 32
+    static let verticalBias: CGFloat = 1.8
+    /// 连续移动阈值的回退默认值。运行时会根据面板实际宽度重算为「麦克风中心 → 侧按钮中心」的距离（见 ChatView.measuredContinuousThreshold）。
+    static let continuousThreshold: CGFloat = 96
+    /// 侧按钮（退格 / 回车）直径的一半，用于推算其中心位置。
+    static let sideButtonHalf: CGFloat = 28
+    static let repeatSlow: Double = 0.2
+    static let repeatFast: Double = 0.04
+    static let tapMaxDuration: Double = 0.18
+    static let doubleTapMax: Double = 0.35
+    static let composerLift: CGFloat = 56
+    static let holdDuration: Double = 0.75
+}
+
+struct ChatView: View {
+    @EnvironmentObject private var connections: ConnectionManager
+    @Environment(\.dismiss) private var dismiss
+    let connectionId: String
+    let sessionId: String
+
+    @StateObject private var speech = SpeechRecognizer()
+    @State private var hint = "按住说话"
+    @State private var inputVisible = false
+    @State private var inputText = ""
+    /// UIKit 输入框的焦点开关（避免 SwiftUI TextField 触发的宿主层键盘避让）。
+    @State private var inputFocused = false
+    @State private var toast: String?
+    @State private var showHeaderActions = false
+    @State private var talkMode = SpeechRecognizer.Mode.standard
+    @State private var lastQuickTap = Date.distantPast
+    @State private var isTalking = false
+    @State private var talkStartedAt = Date.distantPast
+    @State private var talkGestureActive = false
+
+    @State private var inCursorMode = false
+    @State private var cursorVertical = false
+    @State private var cursorBaseline: CGSize = .zero
+    @State private var cursorDelta: CGFloat = 0
+    @State private var lastStepIndex: Int = 0
+    @State private var repeatTimer: Timer?
+
+    /// 连续光标移动的触发阈值：麦克风中心 → 侧按钮中心的水平距离，随面板实际宽度自适应。
+    @State private var cursorContinuousThreshold: CGFloat = TalkUX.continuousThreshold
+    /// 手指相对麦克风中心的水平偏移（点），作为连续触发的绝对基准（不随进入光标模式重定基线）。
+    @State private var cursorAbsDelta: CGFloat = 0
+    /// 是否处于连续触发态：方向提示的圆点由一个裂变为两个，反馈「已进入连续滑动」。
+    @State private var isContinuous = false
+
+    @State private var pullProgress: CGFloat = 0
+
+    // MARK: 远程屏幕「下拉幕布」（视频窗口）状态
+    /// 幕布逻辑开合态。
+    @State private var curtainOpen = false
+    /// 幕布当前纵向平移量 translationY，范围 [-curtainHeight, 0]；0=完全打开，-height=完全收起（初始设大负值，待测量后归位）。
+    @State private var curtainTranslation: CGFloat = -3000
+    /// 幕布全高（屏顶到底边的距离），由顶层 GeometryReader 真实尺寸算得。
+    @State private var curtainHeightPx: CGFloat = 0
+    /// 手势开始时记录的平移基准，nil 表示未在拖动。
+    @State private var curtainTransAtStart: CGFloat? = nil
+    /// 幕布底边距屏幕底的预留高度：让出底部语音面板（含 home 横杠 + composer + hint + 间距）。
+    private let curtainBottomReserve: CGFloat = 150
+    /// hint 在全局坐标中的矩形（含底部 8pt margin）；用于把幕布底边定位到 hint 上方 8pt，并界定底部收起热区。
+    @State private var curtainHintFrame: CGRect = .zero
+    /// 全屏尺寸（含安全区），由忽略安全区的背景 reader 测得，供幕布高度回退与握把定位用。
+    @State private var screenSize: CGSize = .zero
+    @State private var screenTopInset: CGFloat = 0
+    /// 底部安全区高度（Home 横杠），用于把悬浮输入栏精确抬到键盘上方。
+    @State private var screenBottomInset: CGFloat = 0
+
+
+    private var session: DesktopSession? { connections.session(connectionId: connectionId, sessionId: sessionId) }
+
+    var body: some View {
+        ZStack {
+            AppColor.bg.ignoresSafeArea()
+            if session == nil {
+                Text("桌面窗口已关闭")
+                    .font(.system(size: 15))
+                    .foregroundStyle(AppColor.textSecondary)
+                    .onAppear { DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { dismiss() } }
+            }
+
+            // 远程屏幕「下拉幕布」：从屏顶覆盖标题与消息区的悬浮视频窗口（暂为深灰占位）。
+            // 高度由背景 reader 测得的全屏尺寸算得（全屏高 − 底部语音区预留），稳定可靠。
+            if session != nil {
+                let fullH = screenSize.height > 0 ? screenSize.height : UIScreen.main.bounds.height
+                screenCurtain(fullHeight: fullH, topInset: screenTopInset)
+                    .ignoresSafeArea()
+            }
+
+            if let toast {
+                Text(toast)
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(AppColor.textSecondary)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(AppColor.statusIdleBg)
+                    .clipShape(Capsule())
+                    .padding(.bottom, 112)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+
+            // 主内容单链（方案1）：作为 ZStack 内的正常 VStack 子层，填满并贴底；
+            // messages 为唯一弹性区，键盘由系统直接压缩这条链，inputArea 自然落在键盘上沿。
+            if let session {
+                VStack(spacing: 0) {
+                    header(session)
+                        .background(frameLogger("header"))
+                    messages(session)
+                        .background(frameLogger("messages"))
+                    inputArea(session)
+                        .background(frameLogger("inputArea"))
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 14)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            }
+        }
+        // 读取全屏尺寸与安全区，供幕布高度回退与握把定位（加回 insets 得全屏高）。
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear {
+                        screenSize = CGSize(width: geo.size.width,
+                                            height: geo.size.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom)
+                        screenTopInset = geo.safeAreaInsets.top
+                    }
+                    .onChange(of: geo.size) { newSize in
+                        screenSize = CGSize(width: newSize.width,
+                                            height: newSize.height + geo.safeAreaInsets.top + geo.safeAreaInsets.bottom)
+                        screenTopInset = geo.safeAreaInsets.top
+                    }
+            }
+        )
+        .navigationBarBackButtonHidden(true)
+        .navigationBarTitleDisplayMode(.inline)
+        .onPreferenceChange(HintFrameKey.self) { frame in
+            curtainHintFrame = frame
+        }
+        .onChange(of: inputVisible) { visible in
+            // 展开文本输入栏即拉起键盘；收起即收键盘。
+            inputFocused = visible
+        }
+        .onAppear {
+            speech.requestPermissions()
+            speech.prepare()
+            speech.onPartial = { hint = $0 }
+            speech.onResult = { text in
+                isTalking = false
+                hint = idleHint()
+                if let session = self.session, !text.isEmpty { connections.sendText(session: session, text: text) }
+            }
+            speech.onError = { message in
+                showToast(message)
+                hint = idleHint()
+                isTalking = false
+                if message.contains("模拟器") { withAnimation { inputVisible = true } }
+            }
+        }
+        .onChange(of: connections.isConnected) { connected in
+            if !connected { showToast("桌面已断开"); dismiss() }
+        }
+        .onDisappear {
+            speech.teardown()
+        }
+        .confirmationDialog("更多操作", isPresented: $showHeaderActions, titleVisibility: .hidden) {
+            Button("查看屏幕") { openCurtain() }
+            Button("全选") { sendAction("selectAll") }
+            Button("清空") { sendAction("clear"); showToast("已清空") }
+            Button("取消", role: .cancel) {}
+        }
+    }
+
+    /// 坐标探针：记录关键视图在全局坐标的 frame，用于键盘前后对照（标签 KBFRAME）。
+    private func frameLogger(_ tag: String) -> some View {
+        GeometryReader { g in
+            let f = g.frame(in: .global)
+            Color.clear
+                .onAppear {
+                    NSLog("KBFRAME \(tag) appear minY=\(f.minY) maxY=\(f.maxY) h=\(f.height)")
+                }
+                .onChange(of: f) { nf in
+                    NSLog("KBFRAME \(tag) change minY=\(nf.minY) maxY=\(nf.maxY) h=\(nf.height)")
+                }
+        }
+    }
+
+    /// 输入区（固定挂在主链底部）：语音面板与文本输入二选一显示。
+    @ViewBuilder
+    private func inputArea(_ session: DesktopSession) -> some View {
+        if inputVisible {
+            textInput(session)
+        } else {
+            VStack(spacing: 0) {
+                Text(hint)
+                    .font(.system(size: 13))
+                    .foregroundStyle(AppColor.textTertiary)
+                    .padding(.bottom, 8)
+                    .background(GeometryReader { g in
+                        Color.clear.preference(key: HintFrameKey.self,
+                                               value: g.frame(in: .global))
+                    })
+                    .offset(y: -TalkUX.composerLift * pullProgress)
+                    .opacity(Double(1 - pullProgress))
+                voiceComposer(session)
+            }
+            .padding(.bottom, -13)
+        }
+    }
+
+
+    private func textInput(_ session: DesktopSession) -> some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            UIKitInputField(
+                text: $inputText,
+                isFirstResponder: $inputFocused,
+                onSubmit: { sendTypedText(session) }
+            )
+                .frame(height: 24)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(AppColor.surfaceAlt)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            Button { sendTypedText(session) } label: {
+                Image(systemName: "paperplane.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 40, height: 40)
+                    .background(AppColor.accent)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+        .background(AppColor.surface)
+        .overlay(Rectangle().fill(AppColor.line).frame(height: 1), alignment: .top)
+        .gesture(DragGesture(minimumDistance: 18).onEnded { value in
+            if value.translation.height > 28 {
+                inputFocused = false
+                withAnimation { inputVisible = false }
+            }
+        })
+    }
+
+    private static func keyWindowSafeAreaBottom() -> CGFloat {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let window = scenes.flatMap { $0.windows }.first { $0.isKeyWindow }
+            ?? scenes.first?.windows.first
+        return window?.safeAreaInsets.bottom ?? 0
+    }
+    private func header(_ session: DesktopSession) -> some View {
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(session.displayApp)
+                    .font(.system(size: 22, weight: .bold))
+                    .foregroundStyle(AppColor.textPrimary)
+                    .lineLimit(1)
+                Text(session.displayTitle)
+                    .font(.system(size: 13))
+                    .foregroundStyle(AppColor.textSecondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button { showHeaderActions = true } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 21, weight: .bold))
+                    .foregroundStyle(AppColor.textSecondary)
+                    .frame(width: 40, height: 40)
+                    .background(AppColor.surfaceAlt)
+                    .clipShape(Circle())
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 20)
+        .padding(.vertical, 18)
+        .panel()
+    }
+
+    private func messages(_ session: DesktopSession) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .trailing, spacing: 10) {
+                    ForEach(Array(session.messages.enumerated()), id: \.element.id) { index, message in
+                        MessageBubble(message: message)
+                            .id(message.id)
+                            .contextMenu {
+                                Button("重新发送") { connections.resendText(session: session, text: message.text); showToast("已发送") }
+                                Button("删除", role: .destructive) { connections.deleteMessage(session: session, at: index) }
+                            }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.top, 12)
+                .padding(.bottom, 12)
+            }
+            .onChange(of: session.messages.count) { _ in
+                if let last = session.messages.last { proxy.scrollTo(last.id, anchor: .bottom) }
+            }
+        }
+    }
+
+    private func voiceComposer(_ session: DesktopSession) -> some View {
+        // 可见面板（含按钮）随拖动上移淡出；按钮可点击。
+        // .offset 不改变布局 frame，因此其后挂的热区 overlay 保持静止，不随拖动移动（避免手势取消弹跳）。
+        composerBody(session)
+            .offset(y: -TalkUX.composerLift * pullProgress)
+            .opacity(Double(1 - pullProgress))
+            .overlay(alignment: .top) {
+                HStack(spacing: 0) {
+                    Rectangle()
+                        .fill(Color.black.opacity(0.0001))
+                        .frame(maxWidth: .infinity)
+                        .gesture(pullGesture())
+                    Color.clear
+                        .frame(width: 140)
+                        .allowsHitTesting(false)
+                    Rectangle()
+                        .fill(Color.black.opacity(0.0001))
+                        .frame(maxWidth: .infinity)
+                        .gesture(pullGesture())
+                }
+                .frame(height: 28 + 10)
+                .offset(y: -10)
+            }
+            .overlay(alignment: .leading) {
+                Rectangle()
+                    .fill(Color.black.opacity(0.0001))
+                    .frame(width: 20 + 10)
+                    .frame(maxHeight: .infinity)
+                    .padding(.top, -10)
+                    .offset(x: -10)
+                    .gesture(pullGesture())
+            }
+            .overlay(alignment: .trailing) {
+                Rectangle()
+                    .fill(Color.black.opacity(0.0001))
+                    .frame(width: 20 + 10)
+                    .frame(maxHeight: .infinity)
+                    .padding(.top, -10)
+                    .offset(x: 10)
+                    .gesture(pullGesture())
+            }
+    }
+
+    private func composerBody(_ session: DesktopSession) -> some View {
+        HStack {
+            HoldProgressButton(
+                systemName: "delete.left",
+                onTap: { sendAction("backspace") },
+                onHold: { sendAction("clear"); showToast("已清空") }
+            )
+            Spacer()
+            talkButton(session)
+            Spacer()
+            HoldProgressButton(
+                systemName: "return",
+                onTap: { sendAction("shiftEnter") },
+                onHold: { sendAction("enter") }
+            )
+        }
+        .padding(.horizontal, 20)
+        // 垂直内边距 3（原 8），使面板整体高度 −10；内部 110 光晕/78 麦克风仍居中。
+        .padding(.vertical, 3)
+        .background(
+            GeometryReader { proxy in
+                Color.clear.onAppear {
+                    // 面板内容宽 = 面板宽 - 2×20（水平内边距）；侧按钮贴靠内容边缘，
+                    // 其中心距面板中心 = 内容宽/2 − 侧按钮半径。
+                    let contentWidth = proxy.size.width - 40
+                    cursorContinuousThreshold = max(TalkUX.cursorStep,
+                                                    contentWidth / 2 - TalkUX.sideButtonHalf)
+                }
+            }
+        )
+        .panel(cornerRadius: 34)
+        .overlay(alignment: .top) {
+            HStack {
+                CornerArc(mirrored: false)
+                    .stroke(AppColor.textTertiary.opacity(0.28),
+                            style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                    .frame(width: 34, height: 34)
+                Spacer()
+                CornerArc(mirrored: true)
+                    .stroke(AppColor.textTertiary.opacity(0.28),
+                            style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                    .frame(width: 34, height: 34)
+            }
+            .allowsHitTesting(false)
+        }
+    }
+
+    private func pullGesture() -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                let pulled = max(0, -value.translation.height)
+                pullProgress = min(1, pulled / TalkUX.composerLift)
+            }
+            .onEnded { value in
+                let pulled = max(0, -value.translation.height)
+                if pulled > TalkUX.composerLift * 0.55 {
+                    withAnimation(.easeOut(duration: 0.18)) {
+                        inputVisible = true
+                        pullProgress = 0
+                    }
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                } else {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                        pullProgress = 0
+                    }
+                }
+            }
+    }
+
+    /// 中间麦克风按钮四周的四向 chevron 提示，暗示可向四方拖拽。
+    /// 左右↔移光标（内侧加小点，暗示可连续拖动），上下↔切行；仅空闲态显示，说话/光标模式时淡出让位。
+    private var directionHints: some View {
+        // 上下：与中心距离固定（vR=49），不动。
+        // 左右：留白多，chevron 不与上下对齐，而是紧挨最外侧的点。
+        //   空闲 → 一个点 + 紧贴箭头；连续触发 → 第二点淡入，箭头随之外移一格让位。
+        let vR: CGFloat = 49
+        let dotNear: CGFloat = 44   // 常驻点
+        let dotFar: CGFloat = 51    // 连续态淡入的第二点
+        let chevronGap: CGFloat = 9 // 箭头与最外侧点的间距
+        let hR: CGFloat = (isContinuous ? dotFar : dotNear) + chevronGap
+        let tint = AppColor.accent.opacity(0.34)
+        // 光标模式下按方向聚焦：水平移动隐藏上下，垂直切行隐藏左右；空闲态全显。
+        let horizontalActive = inCursorMode && !cursorVertical
+        let verticalActive = inCursorMode && cursorVertical
+        return ZStack {
+            // 上下 chevron：水平移动时隐藏。
+            Image(systemName: "chevron.compact.up").offset(y: -vR)
+                .opacity(horizontalActive ? 0 : 1)
+            Image(systemName: "chevron.compact.down").offset(y: vR)
+                .opacity(horizontalActive ? 0 : 1)
+            // 左右 chevron：垂直切行时隐藏。
+            Image(systemName: "chevron.compact.left").offset(x: -hR)
+                .opacity(verticalActive ? 0 : 1)
+            Image(systemName: "chevron.compact.right").offset(x: hR)
+                .opacity(verticalActive ? 0 : 1)
+            // 常驻点
+            Circle().frame(width: 3, height: 3).offset(x: -dotNear)
+                .opacity(verticalActive ? 0 : 1)
+            Circle().frame(width: 3, height: 3).offset(x: dotNear)
+                .opacity(verticalActive ? 0 : 1)
+            // 连续态第二点（淡入/淡出）
+            Circle().frame(width: 3, height: 3).offset(x: -dotFar)
+                .opacity(isContinuous && !verticalActive ? 1 : 0)
+            Circle().frame(width: 3, height: 3).offset(x: dotFar)
+                .opacity(isContinuous && !verticalActive ? 1 : 0)
+        }
+        .font(.system(size: 15, weight: .regular))
+        .foregroundStyle(tint)
+        .frame(width: 130, height: 110)
+        .opacity(isTalking ? 0 : 1)
+        .allowsHitTesting(false)
+    }
+
+    private func talkButton(_ session: DesktopSession) -> some View {
+        ZStack {
+            Circle()
+                .fill(AppColor.accent.opacity(0.18))
+                .frame(width: 110, height: 110)
+                .scaleEffect(isTalking ? 1.0 : 0.7)
+                .opacity(isTalking ? 1 : 0)
+            directionHints
+            Image(systemName: "mic.fill")
+                .font(.system(size: 30, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: 78, height: 78)
+                .background(
+                    Circle()
+                        .fill(AppColor.accent)
+                )
+                .shadow(color: AppColor.accent.opacity(isTalking ? 0.28 : 0.18), radius: 14, y: 4)
+                .scaleEffect(isTalking ? 0.94 : 1.0)
+        }
+        .frame(width: 110, height: 110)
+        .animation(.easeOut(duration: 0.15), value: isTalking)
+        .animation(.easeOut(duration: 0.15), value: inCursorMode)
+        .contentShape(Circle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { value in
+                    if !talkGestureActive { talkBegan() }
+                    handleTalkDragChanged(value)
+                }
+                .onEnded { value in
+                    handleTalkDragEnded(value)
+                }
+        )
+    }
+
+    private func talkBegan() {
+        guard session != nil else { return }
+        talkGestureActive = true
+        talkStartedAt = Date()
+        inCursorMode = false
+        cursorDelta = 0
+        cursorBaseline = .zero
+        lastStepIndex = 0
+        startTalking()
+    }
+
+    private func handleTalkDragChanged(_ value: DragGesture.Value) {
+        if !inCursorMode {
+            let dist = hypot(value.translation.width, value.translation.height)
+            if dist > TalkUX.cursorActivation {
+                cursorVertical = abs(value.translation.height) > abs(value.translation.width) * TalkUX.verticalBias
+                inCursorMode = true
+                cursorBaseline = value.translation
+                cursorDelta = 0
+                lastStepIndex = 0
+                speech.cancel()
+                isTalking = false
+                UIImpactFeedbackGenerator(style: .rigid).impactOccurred()
+                hint = cursorVertical ? "↑ 上滑松手切行 ↓" : "← 拖动移动光标 →"
+            }
+        }
+        guard inCursorMode else { return }
+        if cursorVertical {
+            let d = value.translation.height - cursorBaseline.height
+            cursorDelta = d
+            if abs(d) >= TalkUX.swipeTrigger {
+                hint = d > 0 ? "↓ 松手切到下一行" : "↑ 松手切到上一行"
+            } else {
+                hint = "↑ 上滑松手切行 ↓"
+            }
+        } else {
+            let d = value.translation.width - cursorBaseline.width
+            cursorDelta = d
+            // 连续触发以麦克风中心为绝对基准（talkButton 手势帧 110×110，中心 x=55），
+            // 与棘轮逐字的重定基线解耦，确保「滑到侧按钮中心」才切连续。
+            cursorAbsDelta = value.location.x - 55
+            updateRatchet(d)
+            updateRepeat(absDelta: abs(cursorAbsDelta))
+        }
+    }
+
+    private func updateRatchet(_ delta: CGFloat) {
+        let stepIndex = Int((delta / TalkUX.cursorStep).rounded())
+        guard stepIndex != lastStepIndex else { return }
+        let positive = stepIndex > lastStepIndex
+        let count = abs(stepIndex - lastStepIndex)
+        for _ in 0..<count {
+            sendCursor(positive ? "cursorRight" : "cursorLeft")
+        }
+        lastStepIndex = stepIndex
+    }
+
+    private func updateRepeat(absDelta: CGFloat) {
+        if absDelta >= cursorContinuousThreshold {
+            if repeatTimer == nil { scheduleNextRepeat() }
+            if !isContinuous {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) { isContinuous = true }
+            }
+        } else {
+            stopRepeat()
+        }
+    }
+
+    private func scheduleNextRepeat() {
+        let interval = repeatInterval()
+        repeatTimer?.invalidate()
+        repeatTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { _ in
+            DispatchQueue.main.async {
+                guard inCursorMode, !cursorVertical, abs(cursorAbsDelta) >= cursorContinuousThreshold else {
+                    stopRepeat()
+                    return
+                }
+                sendCursor(cursorAbsDelta > 0 ? "cursorRight" : "cursorLeft")
+                scheduleNextRepeat()
+            }
+        }
+    }
+
+    private func repeatInterval() -> Double {
+        let travel = abs(cursorAbsDelta)
+        let start = cursorContinuousThreshold
+        let full = start + TalkUX.cursorStep * 8
+        let t = min(1, max(0, Double((travel - start) / (full - start))))
+        return TalkUX.repeatSlow - (TalkUX.repeatSlow - TalkUX.repeatFast) * t
+    }
+
+    private func stopRepeat() {
+        repeatTimer?.invalidate()
+        repeatTimer = nil
+        if isContinuous {
+            withAnimation(.spring(response: 0.25, dampingFraction: 0.6)) { isContinuous = false }
+        }
+    }
+
+    private func sendCursor(_ action: String) {
+        guard let session else { return }
+        connections.sendAction(session: session, action: action)
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
+
+    private func handleTalkDragEnded(_ value: DragGesture.Value) {
+        stopRepeat()
+        if inCursorMode {
+            if cursorVertical && abs(cursorDelta) >= TalkUX.swipeTrigger {
+                let action = cursorDelta > 0 ? "cursorDown" : "cursorUp"
+                if let session { connections.sendAction(session: session, action: action) }
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.06) {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                }
+            }
+            inCursorMode = false
+            cursorDelta = 0
+            hint = idleHint()
+            isTalking = false
+        } else {
+            let held = Date().timeIntervalSince(talkStartedAt)
+            if held < TalkUX.tapMaxDuration {
+                speech.cancel()
+                isTalking = false
+                handleQuickTap()
+            } else {
+                speech.stop()
+                isTalking = false
+                hint = idleHint()
+            }
+        }
+        talkGestureActive = false
+    }
+
+    private func actionButton(systemName: String, size: CGFloat, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 23, weight: .semibold))
+                .foregroundStyle(AppColor.textSecondary)
+                .frame(width: size, height: size)
+                .background(AppColor.surfaceAlt)
+                .clipShape(Circle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func startTalking() {
+        guard session != nil, !isTalking else { return }
+        isTalking = true
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        hint = talkMode == .english ? "请说英文" : "正在听…"
+        let mode = talkMode
+        talkMode = .standard
+        speech.start(mode: mode)
+    }
+
+    private func stopTalking() {
+        guard isTalking else { return }
+        isTalking = false
+        speech.stop()
+        hint = idleHint()
+    }
+
+    private func handleQuickTap() {
+        let now = Date()
+        if now.timeIntervalSince(lastQuickTap) < TalkUX.doubleTapMax, SpeechRecognizer.englishModeAvailable {
+            talkMode = .english
+            hint = "请说英文"
+            lastQuickTap = .distantPast
+        } else {
+            lastQuickTap = now
+            showToast("再按一次进入英文输入")
+            hint = idleHint()
+        }
+    }
+
+    private func idleHint() -> String {
+        talkMode == .english ? "请说英文" : "按住说话"
+    }
+
+    private func sendTypedText(_ session: DesktopSession) {
+        let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        connections.sendText(session: session, text: text)
+        inputText = ""
+    }
+
+    private func sendAction(_ action: String) {
+        guard let session else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        connections.sendAction(session: session, action: action)
+    }
+
+    private func showToast(_ text: String) {
+        withAnimation { toast = text }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { withAnimation { toast = nil } }
+    }
+
+    // MARK: - 远程屏幕「下拉幕布」
+
+    /// 幕布主体：深灰占位画面 + 顶部握把 + 右下小地图占位 + 底边投影；整块随 curtainTranslation 平移。
+    @ViewBuilder
+    private func screenCurtain(fullHeight: CGFloat, topInset: CGFloat) -> some View {
+        // 幕布底边 = hint 文字顶 − 8pt（hint 上方留 8pt）；hint 下方 8pt margin 已由 .padding(.bottom,8) 给出，
+        // 故 hint 在幕布与 composer 之间上下各 8pt 居中。未测得时回退到 fullHeight − reserve。
+        let measured = curtainHintFrame
+        let hasHint = measured.height > 0
+        let height: CGFloat = hasHint ? max(1, measured.minY - 8)
+                                      : max(1, fullHeight - curtainBottomReserve)
+        // 底部收起热区：hint margin 区（minY..maxY=composer 顶）+ 向上溢出覆盖视频窗口底部 10pt。
+        let bandTop: CGFloat = hasHint ? measured.minY - 18 : 0
+        let bandBottom: CGFloat = hasHint ? measured.maxY : 0
+        let topSafe = topInset
+        let progress = Double(max(0, min(1, (curtainTranslation + height) / height)))
+        ZStack(alignment: .top) {
+            // —— 视觉层（不接收手势，纯展示，随 translation 平移）——
+            VStack(spacing: 0) {
+                ZStack {
+                    AppColor.videoSurface
+
+                    // 占位提示（接入真实视频后移除）。
+                    VStack(spacing: 10) {
+                        Image(systemName: "display")
+                            .font(.system(size: 34, weight: .regular))
+                            .foregroundStyle(.white.opacity(0.32))
+                        Text("屏幕画面（占位）")
+                            .font(.system(size: 14))
+                            .foregroundStyle(.white.opacity(0.5))
+                    }
+
+                    // 右下角小地图占位。
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Spacer()
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(AppColor.videoMinimap)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                                )
+                                .frame(width: 150, height: 110)
+                                .padding(16)
+                        }
+                    }
+
+                    // 顶部收起握把（小药丸）。
+                    VStack {
+                        Capsule()
+                            .fill(Color.white.opacity(0.5))
+                            .frame(width: 40, height: 4)
+                            .padding(.top, topSafe + 10)
+                        Spacer()
+                    }
+                }
+                .frame(height: height)
+                .frame(maxWidth: .infinity)
+
+                // 底边投影：跟随面板底边，营造悬浮立体面板。
+                LinearGradient(colors: [Color.black.opacity(0.22), Color.clear],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: 18)
+                    .opacity(progress)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .offset(y: curtainTranslation)
+            .allowsHitTesting(false)
+
+            // —— 手势捕获层（始终全屏、置顶、不随平移）——
+            // 收起态：命中区仅顶部条带（避开右上角「更多」按钮），其余触摸穿透到下方语音页；
+            // 展开态：顶部握把条带 + 底部 hint 收起热区（含视频窗口底部 10pt），中部画面区放行（留作视口拖动）。
+            // 因视图始终全屏且置顶，拖拽一旦开始就全程跟住手指，绝不被下方 ScrollView 抢走。
+            Color.black.opacity(0.0001)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(CurtainHitArea(open: curtainOpen,
+                                             topStripHeight: topSafe + 96,
+                                             buttonCutWidth: 96,
+                                             collapseBandTop: bandTop,
+                                             collapseBandBottom: bandBottom))
+                .gesture(curtainDragGesture())
+        }
+        .onAppear { syncCurtainHeight(height) }
+        .onChange(of: height) { syncCurtainHeight($0) }
+    }
+
+    /// 同步幕布高度，并在未打开、非拖动时停靠到屏外（-height）。
+    private func syncCurtainHeight(_ height: CGFloat) {
+        guard height > 1 else { return }
+        curtainHeightPx = height
+        if !curtainOpen && curtainTransAtStart == nil { curtainTranslation = -height }
+    }
+
+    /// 幕布拖拽手势：收起态下拉打开 / 展开态上滑收起，跟手平移，松手按速度或位置吸附。
+    private func curtainDragGesture() -> some Gesture {
+        let height = max(1, curtainHeightPx)
+        return DragGesture(minimumDistance: 6)
+            .onChanged { value in
+                let first = curtainTransAtStart == nil
+                if first { curtainTransAtStart = curtainTranslation }
+                let base = curtainTransAtStart ?? 0
+                curtainTranslation = min(0, max(-height, base + value.translation.height))
+            }
+            .onEnded { value in
+                curtainTransAtStart = nil
+                settleCurtain(height: height,
+                              predicted: value.predictedEndTranslation.height,
+                              translation: value.translation.height)
+            }
+    }
+
+    /// 松手吸附：动量优先（±120pt），否则按展开进度（>0.4 开）。
+    private func settleCurtain(height: CGFloat, predicted: CGFloat, translation: CGFloat) {
+        let progress = (curtainTranslation + height) / height
+        let momentum = predicted - translation
+        let shouldOpen: Bool
+        if momentum > 120 {
+            shouldOpen = true
+        } else if momentum < -120 {
+            shouldOpen = false
+        } else {
+            shouldOpen = progress > 0.4
+        }
+        if shouldOpen { openCurtain() } else { closeCurtain() }
+    }
+
+    private func openCurtain() {
+        if !curtainOpen { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+        curtainOpen = true
+        withAnimation(.timingCurve(0, 0, 0.2, 1, duration: 0.28)) { curtainTranslation = 0 }
+    }
+
+    private func closeCurtain() {
+        curtainOpen = false
+        withAnimation(.timingCurve(0, 0, 0.2, 1, duration: 0.28)) { curtainTranslation = -max(1, curtainHeightPx) }
+    }
+}
+
+/// 幕布手势捕获层的命中形状。
+/// - 收起态：仅顶部条带（高 topStripHeight），且右上角挖掉 buttonCutWidth 宽放行「更多」按钮；其余触摸穿透。
+/// - 展开态：顶部握把条带 + 底部收起热区 [collapseBandTop, collapseBandBottom]（hint margin + 视频底部 10pt）。
+private struct CurtainHitArea: Shape {
+    var open: Bool
+    var topStripHeight: CGFloat
+    var buttonCutWidth: CGFloat
+    var collapseBandTop: CGFloat
+    var collapseBandBottom: CGFloat
+    func path(in rect: CGRect) -> Path {
+        var p = Path()
+        if open {
+            // 顶部握把：抓握上滑收起 / 下拉继续展开。
+            p.addRect(CGRect(x: 0, y: 0, width: rect.width, height: topStripHeight))
+            // 底部收起热区。
+            let h = collapseBandBottom - collapseBandTop
+            if h > 0 {
+                p.addRect(CGRect(x: 0, y: collapseBandTop, width: rect.width, height: h))
+            }
+        } else {
+            p.addRect(CGRect(x: 0, y: 0,
+                             width: max(0, rect.width - buttonCutWidth),
+                             height: topStripHeight))
+        }
+        return p
+    }
+}
+
+/// hint 在全局坐标中的矩形（含底部 8pt margin），供幕布定位与底部收起热区使用。
+private struct HintFrameKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) {
+        let n = nextValue()
+        if n != .zero { value = n }
+    }
+}
+
+/// 面板顶部圆角同心弧线，半径等于面板 cornerRadius，曲率与面板边缘完全一致。
+private struct CornerArc: Shape {
+    var mirrored: Bool = false
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        let r = rect.width
+        let center = CGPoint(x: mirrored ? 0 : rect.width, y: rect.height)
+        let start = Angle.degrees(mirrored ? 270 : 180)
+        let end = Angle.degrees(mirrored ? 360 : 270)
+        path.addArc(center: center, radius: r, startAngle: start, endAngle: end, clockwise: false)
+        return path
+    }
+}
+
+private struct MessageBubble: View {
+    let message: ChatMessage
+
+    var body: some View {
+        Text(message.text)
+            .font(.system(size: 16))
+            .foregroundStyle(AppColor.textPrimary)
+            .padding(.horizontal, 15)
+            .padding(.vertical, 11)
+            .background(message.fromMe ? AppColor.messageBubble : AppColor.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .frame(maxWidth: 280, alignment: .trailing)
+    }
+}
+
+private struct UIKitInputField: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var isFirstResponder: Bool
+    var onSubmit: () -> Void
+
+    func makeUIView(context: Context) -> UITextField {
+        let field = UITextField(frame: .zero)
+        field.borderStyle = .none
+        field.font = .systemFont(ofSize: 16)
+        field.textColor = UIColor.label
+        field.autocorrectionType = .yes
+        field.autocapitalizationType = .sentences
+        field.returnKeyType = .send
+        field.clearButtonMode = .whileEditing
+        field.placeholder = "输入文字…"
+        field.delegate = context.coordinator
+        field.addTarget(context.coordinator, action: #selector(Coordinator.onTextChanged(_:)), for: .editingChanged)
+        return field
+    }
+
+    func updateUIView(_ uiView: UITextField, context: Context) {
+        if uiView.text != text { uiView.text = text }
+
+        if isFirstResponder {
+            if !uiView.isFirstResponder { uiView.becomeFirstResponder() }
+        } else if uiView.isFirstResponder {
+            uiView.resignFirstResponder()
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, isFirstResponder: $isFirstResponder, onSubmit: onSubmit)
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        private var text: Binding<String>
+        private var isFirstResponder: Binding<Bool>
+        private let onSubmit: () -> Void
+
+        init(text: Binding<String>, isFirstResponder: Binding<Bool>, onSubmit: @escaping () -> Void) {
+            self.text = text
+            self.isFirstResponder = isFirstResponder
+            self.onSubmit = onSubmit
+        }
+
+        @objc func onTextChanged(_ sender: UITextField) {
+            text.wrappedValue = sender.text ?? ""
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            onSubmit()
+            return false
+        }
+
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            isFirstResponder.wrappedValue = true
+        }
+
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            isFirstResponder.wrappedValue = false
+        }
+    }
+}
+
+private struct HoldProgressButton: View {
+    let systemName: String
+    let onTap: () -> Void
+    let onHold: () -> Void
+    var size: CGFloat = 56
+    /// 进度环直径：对齐中间大按钮（78），而非按钮自身，与 Android（control_primary）一致。
+    var ringSize: CGFloat = 78
+    var holdDuration: Double = TalkUX.holdDuration
+
+    @State private var progress: CGFloat = 0
+    @State private var pressed = false
+    @State private var inGesture = false
+    @State private var holdCompleted = false
+    @State private var holdWorkItem: DispatchWorkItem?
+
+    var body: some View {
+        ZStack {
+            Circle().fill(AppColor.surfaceAlt)
+            Image(systemName: systemName)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundStyle(AppColor.textSecondary)
+        }
+        .frame(width: size, height: size)
+        .overlay {
+            // 旋转进度环：半径与中间大按钮一致（直径 ringSize），溢出按钮本体居中绘制。
+            Circle()
+                .trim(from: 0, to: progress)
+                .stroke(AppColor.accent, style: StrokeStyle(lineWidth: ringSize / 20, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+                .frame(width: ringSize, height: ringSize)
+        }
+        .scaleEffect(pressed ? 0.94 : 1.0)
+        .animation(.easeOut(duration: 0.1), value: pressed)
+        .contentShape(Circle())
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { _ in if !inGesture { begin() } }
+                .onEnded { value in
+                    let traveled = hypot(value.translation.width, value.translation.height)
+                    end(cancelled: traveled > size * 0.7)
+                }
+        )
+    }
+
+    private func begin() {
+        inGesture = true
+        pressed = true
+        holdCompleted = false
+        progress = 0
+        withAnimation(.linear(duration: holdDuration)) { progress = 1.0 }
+        let work = DispatchWorkItem {
+            guard pressed, !holdCompleted else { return }
+            holdCompleted = true
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            onHold()
+        }
+        holdWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + holdDuration, execute: work)
+    }
+
+    private func end(cancelled: Bool) {
+        let wasCompleted = holdCompleted
+        pressed = false
+        inGesture = false
+        holdWorkItem?.cancel()
+        holdWorkItem = nil
+        if !wasCompleted && !cancelled {
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            onTap()
+        }
+        withAnimation(.easeOut(duration: 0.18)) { progress = 0 }
+    }
+}
