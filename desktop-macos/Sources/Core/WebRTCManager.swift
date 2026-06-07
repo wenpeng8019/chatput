@@ -41,6 +41,7 @@ final class WebRTCManager: NSObject {
 
     private var pc: RTCPeerConnection?
     private var channel: RTCDataChannel?
+    private var thumbChannel: RTCDataChannel?
 
     // 远程窗口画面（2.0）：预协商一条 sendonly 视频轨，开启采集时才喂帧。
     private var videoSource: RTCVideoSource?
@@ -71,11 +72,17 @@ final class WebRTCManager: NSObject {
         }
         self.pc = pc
 
-        // HOST 创建 DataChannel。
+        // HOST 创建主 DataChannel（有序 JSON）。
         let dcConfig = RTCDataChannelConfiguration()
         if let dc = pc.dataChannel(forLabel: Wire.Msg.channelLabel, configuration: dcConfig) {
             dc.delegate = self
             self.channel = dc
+        }
+        // 缩略图 DataChannel（无序二进制，不阻塞主通道上的触控/视口消息）。
+        var thumbConfig = RTCDataChannelConfiguration()
+        thumbConfig.isOrdered = false
+        if let tc = pc.dataChannel(forLabel: Wire.Msg.thumbChannel, configuration: thumbConfig) {
+            self.thumbChannel = tc
         }
 
         // 预协商一条 sendonly 视频轨：开启远程画面前轨道静默，避免中途重协商。
@@ -164,9 +171,9 @@ final class WebRTCManager: NSObject {
         channel.sendData(RTCDataBuffer(data: data, isBinary: false))
     }
 
-    /// 经 DataChannel 发送二进制帧（用于小地图缩略图）。
-    func sendBinary(_ data: Data) {
-        guard let channel = channel, channel.readyState == .open else { return }
+    /// 经缩略图 DataChannel 发送二进制帧（用于小地图缩略图）。
+    func sendThumb(_ data: Data) {
+        guard let channel = thumbChannel, channel.readyState == .open else { return }
         channel.sendData(RTCDataBuffer(data: data, isBinary: true))
     }
 
@@ -225,6 +232,8 @@ final class WebRTCManager: NSObject {
     func close() {
         channel?.close()
         channel = nil
+        thumbChannel?.close()
+        thumbChannel = nil
         videoTrack = nil
         videoSource = nil
         videoCapturer = nil

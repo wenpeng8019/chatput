@@ -330,8 +330,13 @@ internal class DesktopConnection(
             }
 
             override fun onDataChannel(dataChannel: DataChannel) {
-                this@DesktopConnection.dataChannel = dataChannel
-                wireChannel(dataChannel)
+                when (dataChannel.label()) {
+                    "input" -> {
+                        this@DesktopConnection.dataChannel = dataChannel
+                        wireChannel(dataChannel)
+                    }
+                    "thumb" -> wireThumbChannel(dataChannel)
+                }
             }
 
             override fun onAddTrack(receiver: RtpReceiver, streams: Array<out org.webrtc.MediaStream>?) {
@@ -382,6 +387,21 @@ internal class DesktopConnection(
                     handleBinaryFrame(bytes)
                 } else {
                     handlePeerMessage(JSONObject(String(bytes, StandardCharsets.UTF_8)))
+                }
+            }
+        })
+    }
+
+    /** 缩略图通道：仅接收无序二进制帧，不影响主通道 JSON 消息时序。 */
+    private fun wireThumbChannel(channel: DataChannel) {
+        channel.registerObserver(object : DataChannel.Observer {
+            override fun onBufferedAmountChange(previousAmount: Long) {}
+            override fun onStateChange() {}
+            override fun onMessage(buffer: DataChannel.Buffer) {
+                if (buffer.binary) {
+                    val bytes = ByteArray(buffer.data.remaining())
+                    buffer.data.get(bytes)
+                    handleBinaryFrame(bytes)
                 }
             }
         })

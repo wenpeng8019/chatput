@@ -15,8 +15,10 @@ enum Wire {
 
     /// WebRTC DataChannel 上的业务消息（桌面 ⇄ 手机）。
     enum Msg {
-        /// DataChannel 的标签名（HOST 创建时指定）。
+        /// 主 DataChannel 标签名（HOST 创建时指定）：JSON 消息。
         static let channelLabel = "input"
+        /// 缩略图 DataChannel 标签名：无序二进制帧。
+        static let thumbChannel = "thumb"
 
         /// 桌面 → 手机：推送当前聚焦的输入会话。
         static let session = "session"

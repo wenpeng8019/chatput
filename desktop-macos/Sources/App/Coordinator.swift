@@ -397,7 +397,7 @@ final class Coordinator {
         }
         windowCapturer.onThumbnail = { [weak self] jpeg in
             guard let self = self, !self.screenSessionId.isEmpty else { return }
-            self.webrtc.sendBinary(self.screenThumbFrame(sessionId: self.screenSessionId, jpeg: jpeg))
+            self.webrtc.sendThumb(self.screenThumbFrame(sessionId: self.screenSessionId, jpeg: jpeg))
         }
         windowCapturer.onMeta = { [weak self] winW, winH, applied in
             guard let self = self, !self.screenSessionId.isEmpty else { return }
