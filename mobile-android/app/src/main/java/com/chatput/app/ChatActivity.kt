@@ -559,7 +559,6 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
     private fun isInputAvailable(): Boolean = session?.inputAvailable != false && ConnectionManager.isConnected
 
     private fun sendAction(action: String) {
-        if (!isInputAvailable()) return
         session?.let { ConnectionManager.sendAction(it, action) }
     }
 

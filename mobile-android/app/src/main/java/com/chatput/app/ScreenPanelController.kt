@@ -65,6 +65,7 @@ class ScreenPanelController(
     private var lastMetaW = 0; private var lastMetaH = 0  // 用于检测桌面输出尺寸变化
     private val rendererLongPress = Runnable { showScaleMenu() }
     private var rendererLpPending = false
+    private var longPressX = 0f; private var longPressY = 0f
 
     // 主画面拖动状态
     private var dragLastX = 0f
@@ -252,6 +253,7 @@ class ScreenPanelController(
                 MotionEvent.ACTION_DOWN -> {
                     dragLastX = event.x; dragLastY = event.y
                     isTap = true; tapX = event.x; tapY = event.y
+                    longPressX = event.x; longPressY = event.y
                     scrolling = false
                     cachedDispScale = contentDispScale()
                     rendererLpPending = true
@@ -393,6 +395,7 @@ class ScreenPanelController(
     // 显示缩放菜单
 
     private fun showScaleMenu() {
+        renderer.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
         val ctx = renderer.context
         val content = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL; setPadding(8.dp, 8.dp, 8.dp, 8.dp)
@@ -411,7 +414,10 @@ class ScreenPanelController(
             content.addView(label)
         }
         content.measure(View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED), View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
-        popup.showAsDropDown(renderer, renderer.width - content.measuredWidth - 16.dp, -content.measuredHeight - 16.dp)
+        // showAsDropDown y-offset 从 renderer 底部算起，减掉 renderer 高度转成从顶部算
+        val px = longPressX.toInt().coerceAtMost(renderer.width - content.measuredWidth - 16.dp)
+        val py = longPressY.toInt() - renderer.height - content.measuredHeight - 16.dp
+        popup.showAsDropDown(renderer, px, py)
     }
 
     private fun applyScale(scale: Float) {

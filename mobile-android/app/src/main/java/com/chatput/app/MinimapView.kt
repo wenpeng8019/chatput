@@ -132,14 +132,15 @@ class MinimapView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = event.x; downY = event.y
-                longPressPending = true
-                postDelayed(longPressRunnable, longPressTimeout)
                 val inside = event.x in boxLeft..boxRight && event.y in boxTop..boxBottom
                 if (inside) {
                     dragging = true
                     parent?.requestDisallowInterceptTouchEvent(true)
                     dragDx = event.x - boxLeft
                     dragDy = event.y - boxTop
+                } else {
+                    longPressPending = true
+                    postDelayed(longPressRunnable, longPressTimeout)
                 }
                 return true
             }
