@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import WebRTC
 
 private enum TalkUX {
     static let cursorActivation: CGFloat = 28
@@ -60,6 +61,8 @@ struct ChatView: View {
     @AppStorage("debugHotZones") private var debugHotZones = false
     @State private var headerTapCount = 0
     @State private var headerTapReset: DispatchWorkItem?
+    @StateObject private var screenState = ScreenState()
+    @State private var videoAreaSize: CGSize = .zero
 
     private var session: DesktopSession? { connections.session(connectionId: connectionId, sessionId: sessionId) }
 
@@ -134,6 +137,12 @@ struct ChatView: View {
             if !connected {
                 showToast("桌面已断开")
                 dismiss()
+            }
+        }
+        .onChange(of: videoAreaSize) { size in
+            if screenPanelOpen, let session, size.width > 0, size.height > 0 {
+                connections.sendViewport(session: session, x: 0, y: 0,
+                                         w: Int(size.width), h: Int(size.height))
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { note in
@@ -827,22 +836,19 @@ struct ChatView: View {
                     ZStack {
                         AppColor.videoSurface
 
-                        LinearGradient(
-                            colors: [Color.black.opacity(0.18), Color.clear],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                        .frame(maxHeight: .infinity, alignment: .top)
-
-                        VStack(spacing: 10) {
-                            Spacer(minLength: topInset + 24)
-                            Image(systemName: "display")
-                                .font(.system(size: 34, weight: .regular))
-                                .foregroundStyle(.white.opacity(0.32))
-                            Text("屏幕画面（占位）")
-                                .font(.system(size: 14))
-                                .foregroundStyle(.white.opacity(0.5))
-                            Spacer(minLength: 0)
+                        if screenState.videoTrack != nil {
+                            VideoRendererView(track: $screenState.videoTrack)
+                        } else {
+                            VStack(spacing: 10) {
+                                Spacer(minLength: topInset + 24)
+                                Image(systemName: "display")
+                                    .font(.system(size: 34, weight: .regular))
+                                    .foregroundStyle(.white.opacity(0.32))
+                                Text("等待画面…")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(.white.opacity(0.5))
+                                Spacer(minLength: 0)
+                            }
                         }
 
                         VStack {
@@ -853,18 +859,39 @@ struct ChatView: View {
                             Spacer()
                             HStack {
                                 Spacer()
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(AppColor.videoMinimap)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                            .stroke(Color.white.opacity(0.18), lineWidth: 1)
-                                    )
-                                    .frame(width: 150, height: 110)
-                                    .padding(.trailing, 16)
-                                    .padding(.bottom, 22)
+                                if let thumb = screenState.thumbnail {
+                                    Image(uiImage: thumb)
+                                        .resizable()
+                                        .aspectRatio(contentMode: .fill)
+                                        .frame(width: 150, height: 110)
+                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                                        )
+                                } else {
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(AppColor.videoMinimap)
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                                        )
+                                        .frame(width: 150, height: 110)
+                                }
                             }
+                            .padding(.trailing, 16)
+                            .padding(.bottom, 22)
                         }
                     }
+                    .background(
+                        GeometryReader { proxy in
+                            Color.clear.onAppear {
+                                videoAreaSize = proxy.size
+                            }.onChange(of: proxy.size) { newSize in
+                                videoAreaSize = newSize
+                            }
+                        }
+                    )
                     .frame(height: panelHeight)
                     .frame(maxWidth: .infinity)
 
@@ -944,11 +971,22 @@ struct ChatView: View {
         if !screenPanelOpen { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
         screenPanelOpen = true
         screenPanelDragOffset = 0
+        connections.setScreenListener(connectionId: connectionId, listener: screenState)
+        if let session {
+            requestScreen(session)
+        }
     }
 
     private func closeScreenPanel() {
         screenPanelOpen = false
         screenPanelDragOffset = 0
+        if let session { connections.stopScreen(session: session) }
+    }
+
+    private func requestScreen(_ session: DesktopSession) {
+        let w = videoAreaSize.width > 0 ? Int(videoAreaSize.width) : Int(UIScreen.main.bounds.width)
+        let h = videoAreaSize.height > 0 ? Int(videoAreaSize.height) : Int(UIScreen.main.bounds.height)
+        connections.startScreen(session: session, viewportW: w, viewportH: h)
     }
 }
 
@@ -991,6 +1029,70 @@ private struct InputViewFrameKey: PreferenceKey {
         let next = nextValue()
         if next != .zero {
             value = next
+        }
+    }
+}
+
+@MainActor
+final class ScreenState: ObservableObject, ScreenListener {
+    @Published var videoTrack: RTCVideoTrack?
+    @Published var thumbnail: UIImage?
+    @Published var metaWinW: Int = 0
+    @Published var metaWinH: Int = 0
+    @Published var metaScale: Float = 2.0
+    @Published var metaX: Int = 0
+    @Published var metaY: Int = 0
+    @Published var metaW: Int = 0
+    @Published var metaH: Int = 0
+
+    func onVideoTrack(_ track: RTCVideoTrack) {
+        videoTrack = track
+    }
+
+    func onThumbnail(sessionId: String, jpeg: Data) {
+        thumbnail = UIImage(data: jpeg)
+    }
+
+    func onMeta(sessionId: String, winW: Int, winH: Int, scale: Float, x: Int, y: Int, w: Int, h: Int) {
+        metaWinW = winW; metaWinH = winH; metaScale = scale
+        metaX = x; metaY = y; metaW = w; metaH = h
+    }
+
+    func onScreenError(sessionId: String, message: String) {
+        print("[chatput-screen] error: \(message)")
+    }
+}
+
+private struct VideoRendererView: UIViewRepresentable {
+    @Binding var track: RTCVideoTrack?
+
+    func makeUIView(context: Context) -> RTCMTLVideoView {
+        let view = RTCMTLVideoView()
+        view.videoContentMode = .scaleAspectFit
+        return view
+    }
+
+    func updateUIView(_ uiView: RTCMTLVideoView, context: Context) {
+        if let oldTrack = context.coordinator.currentTrack, oldTrack !== track {
+            oldTrack.remove(uiView)
+        }
+        if let newTrack = track, newTrack !== context.coordinator.currentTrack {
+            newTrack.add(uiView)
+        }
+        context.coordinator.currentTrack = track
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    final class Coordinator {
+        var currentTrack: RTCVideoTrack?
+    }
+
+    static func dismantleUIView(_ uiView: RTCMTLVideoView, coordinator: Coordinator) {
+        if let track = coordinator.currentTrack {
+            track.remove(uiView)
         }
     }
 }

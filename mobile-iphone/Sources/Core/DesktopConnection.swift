@@ -2,6 +2,13 @@ import Foundation
 import UIKit
 import WebRTC
 
+protocol ScreenListener: AnyObject {
+    func onVideoTrack(_ track: RTCVideoTrack)
+    func onThumbnail(sessionId: String, jpeg: Data)
+    func onMeta(sessionId: String, winW: Int, winH: Int, scale: Float, x: Int, y: Int, w: Int, h: Int)
+    func onScreenError(sessionId: String, message: String)
+}
+
 final class DesktopConnection: NSObject {
     let connectionId: String
     let payload: QRPairingPayload
@@ -20,6 +27,14 @@ final class DesktopConnection: NSObject {
     var onConnected: ((String, QRPairingPayload) -> Void)?
     var onLabelChanged: ((String, String) -> Void)?
     var onPairingExpired: ((String, String) -> Bool)?
+
+    weak var screenListener: ScreenListener? {
+        didSet {
+            if let track = remoteVideoTrack { screenListener?.onVideoTrack(track) }
+        }
+    }
+    private var remoteVideoTrack: RTCVideoTrack?
+    private var thumbChannel: RTCDataChannel?
 
     private static let factory: RTCPeerConnectionFactory = {
         RTCInitializeSSL()
@@ -79,6 +94,44 @@ final class DesktopConnection: NSObject {
     func sendAction(session: DesktopSession, action: String) {
         guard isConnected else { return }
         sendPeerMessage([Wire.Key.type: Wire.Msg.action, "action": action, "sessionId": session.sessionId])
+    }
+
+    func startScreen(session: DesktopSession, viewportW: Int, viewportH: Int) {
+        guard isConnected else { return }
+        sendPeerMessage([
+            Wire.Key.type: Wire.Msg.screenStart,
+            "sessionId": session.sessionId,
+            "viewport": ["w": viewportW, "h": viewportH]
+        ])
+    }
+
+    func stopScreen(session: DesktopSession) {
+        guard isConnected else { return }
+        sendPeerMessage([Wire.Key.type: Wire.Msg.screenStop, "sessionId": session.sessionId])
+    }
+
+    func sendViewport(session: DesktopSession, x: Int, y: Int, w: Int, h: Int) {
+        guard isConnected else { return }
+        sendPeerMessage([
+            Wire.Key.type: Wire.Msg.viewport,
+            "sessionId": session.sessionId,
+            "x": x, "y": y, "w": w, "h": h
+        ])
+    }
+
+    func sendPointerDown(session: DesktopSession, x: Int, y: Int) {
+        guard isConnected else { return }
+        sendPeerMessage([Wire.Key.type: Wire.Msg.pointerDown, "sessionId": session.sessionId, "x": x, "y": y])
+    }
+
+    func sendPointerUp(session: DesktopSession, x: Int, y: Int) {
+        guard isConnected else { return }
+        sendPeerMessage([Wire.Key.type: Wire.Msg.pointerUp, "sessionId": session.sessionId, "x": x, "y": y])
+    }
+
+    func sendPointerScroll(session: DesktopSession, dx: Int, dy: Int) {
+        guard isConnected else { return }
+        sendPeerMessage([Wire.Key.type: Wire.Msg.pointerScroll, "sessionId": session.sessionId, "dx": dx, "dy": dy])
     }
 
     func disconnect() {
@@ -211,9 +264,41 @@ final class DesktopConnection: NSObject {
                     onSessionsChanged?(connectionId)
                 }
             }
+        case Wire.Msg.screenError:
+            screenListener?.onScreenError(
+                sessionId: object["sessionId"] as? String ?? "",
+                message: object["message"] as? String ?? "采集失败")
+        case Wire.Msg.screenMeta:
+            handleScreenMeta(object)
         default:
             break
         }
+    }
+
+    private func handleScreenMeta(_ object: [String: Any]) {
+        guard let listener = screenListener,
+              let sessionId = object["sessionId"] as? String,
+              let win = object["win"] as? [String: Any],
+              let applied = object["applied"] as? [String: Any] else { return }
+        listener.onMeta(
+            sessionId: sessionId,
+            winW: win["w"] as? Int ?? 0,
+            winH: win["h"] as? Int ?? 0,
+            scale: Float(win["scale"] as? Double ?? 2.0),
+            x: applied["x"] as? Int ?? 0,
+            y: applied["y"] as? Int ?? 0,
+            w: applied["w"] as? Int ?? 0,
+            h: applied["h"] as? Int ?? 0
+        )
+    }
+
+    private func handleBinaryFrame(_ data: Data) {
+        guard let listener = screenListener, data.count >= 2 else { return }
+        let idLen = (Int(data[0]) << 8) | Int(data[1])
+        guard idLen >= 0, 2 + idLen <= data.count else { return }
+        let sessionId = String(data: data[2..<(2 + idLen)], encoding: .utf8) ?? ""
+        let jpeg = data.subdata(in: (2 + idLen)..<data.count)
+        listener.onThumbnail(sessionId: sessionId, jpeg: jpeg)
     }
 
     private func upsertSession(_ object: [String: Any]) {
@@ -269,13 +354,18 @@ final class DesktopConnection: NSObject {
         guard !isTearingDown else { return }
         isTearingDown = true
         let dc = dataChannel
+        let tc = thumbChannel
         let pc = peerConnection
         let sig = signaling
         dataChannel = nil
+        thumbChannel = nil
         peerConnection = nil
         signaling = nil
+        remoteVideoTrack = nil
         dc?.delegate = nil
         dc?.close()
+        tc?.delegate = nil
+        tc?.close()
         pc?.delegate = nil
         pc?.close()
         sig?.close()
@@ -337,6 +427,8 @@ extension DesktopConnection: RTCPeerConnectionDelegate {
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
         if dataChannel.label == Wire.Msg.channelLabel {
             self.dataChannel = dataChannel
+        } else if dataChannel.label == Wire.Msg.thumbChannel {
+            thumbChannel = dataChannel
         }
         dataChannel.delegate = self
     }
@@ -344,7 +436,12 @@ extension DesktopConnection: RTCPeerConnectionDelegate {
     func peerConnectionShouldNegotiate(_ peerConnection: RTCPeerConnection) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange stateChanged: RTCSignalingState) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didChange newState: RTCIceGatheringState) {}
-    func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {}
+    func peerConnection(_ peerConnection: RTCPeerConnection, didAdd stream: RTCMediaStream) {
+        if let track = stream.videoTracks.first {
+            remoteVideoTrack = track
+            screenListener?.onVideoTrack(track)
+        }
+    }
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove stream: RTCMediaStream) {}
     func peerConnection(_ peerConnection: RTCPeerConnection, didRemove candidates: [RTCIceCandidate]) {}
 }
@@ -368,9 +465,13 @@ extension DesktopConnection: RTCDataChannelDelegate {
 
     @objc(dataChannel:didReceiveMessageWithBuffer:)
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
-        if buffer.isBinary { return }
+        if buffer.isBinary {
+            if dataChannel.label == Wire.Msg.thumbChannel {
+                handleBinaryFrame(buffer.data)
+            }
+            return
+        }
         guard let object = try? JSONSerialization.jsonObject(with: buffer.data) as? [String: Any] else {
-            let raw = String(data: buffer.data, encoding: .utf8) ?? "<not utf8>"
             return
         }
         DispatchQueue.main.async { [weak self] in self?.handlePeerMessage(object) }

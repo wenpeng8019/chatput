@@ -78,6 +78,34 @@ final class ConnectionManager: ObservableObject {
         connections[session.connectionId]?.sendAction(session: session, action: action)
     }
 
+    func setScreenListener(connectionId: String, listener: ScreenListener?) {
+        connections[connectionId]?.screenListener = listener
+    }
+
+    func startScreen(session: DesktopSession, viewportW: Int, viewportH: Int) {
+        connections[session.connectionId]?.startScreen(session: session, viewportW: viewportW, viewportH: viewportH)
+    }
+
+    func stopScreen(session: DesktopSession) {
+        connections[session.connectionId]?.stopScreen(session: session)
+    }
+
+    func sendViewport(session: DesktopSession, x: Int, y: Int, w: Int, h: Int) {
+        connections[session.connectionId]?.sendViewport(session: session, x: x, y: y, w: w, h: h)
+    }
+
+    func sendPointerDown(session: DesktopSession, x: Int, y: Int) {
+        connections[session.connectionId]?.sendPointerDown(session: session, x: x, y: y)
+    }
+
+    func sendPointerUp(session: DesktopSession, x: Int, y: Int) {
+        connections[session.connectionId]?.sendPointerUp(session: session, x: x, y: y)
+    }
+
+    func sendPointerScroll(session: DesktopSession, dx: Int, dy: Int) {
+        connections[session.connectionId]?.sendPointerScroll(session: session, dx: dx, dy: dy)
+    }
+
     func deleteMessage(session: DesktopSession, at index: Int) {
         guard var desktopSessions = connections[session.connectionId]?.sessions,
               let sessionIndex = desktopSessions.firstIndex(where: { $0.sessionId == session.sessionId }),
