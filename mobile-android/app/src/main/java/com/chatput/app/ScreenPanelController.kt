@@ -49,6 +49,7 @@ class ScreenPanelController(
     private var boundTrack: VideoTrack? = null
     private var started = false
     private var released = false
+    private var layoutListener: android.view.ViewTreeObserver.OnPreDrawListener? = null
 
     // 视口（窗口像素系）。winW/winH 来自桌面 screen-meta。
     // vpX/vpY 用 Float 避免拖动时 Int 截断导致方向性速度偏差。
@@ -118,6 +119,8 @@ class ScreenPanelController(
     fun release() {
         if (released) return
         released = true
+        layoutListener?.let { renderer.viewTreeObserver.removeOnPreDrawListener(it) }
+        layoutListener = null
         stop()
         runCatching { renderer.release() }
     }
@@ -125,16 +128,23 @@ class ScreenPanelController(
     private fun startCaptureWhenReady() {
         val s = session ?: return
         if (released || !started) return
-        val w = renderer.width
-        val h = renderer.height
-        if (w <= 0 || h <= 0) {
-            renderer.postDelayed({ startCaptureWhenReady() }, 50)
+        val rw = renderer.width
+        val rh = renderer.height
+        if (rw <= 0 || rh <= 0) {
+            val listener = android.view.ViewTreeObserver.OnPreDrawListener {
+                renderer.viewTreeObserver.removeOnPreDrawListener(layoutListener)
+                startCaptureWhenReady()
+                true
+            }
+            layoutListener = listener
+            renderer.viewTreeObserver.addOnPreDrawListener(listener)
             return
         }
+        layoutListener = null
         // 视口请求 = 渲染区物理像素 ÷ 手机密度，缩小首帧、加速首屏；
         // 真正视口在首个 meta 后重算下发。
         val density = renderer.resources.displayMetrics.density.coerceAtLeast(1f)
-        ConnectionManager.startScreen(s, (w / density).toInt().coerceAtLeast(2), (h / density).toInt().coerceAtLeast(2))
+        ConnectionManager.startScreen(s, (rw / density).toInt().coerceAtLeast(2), (rh / density).toInt().coerceAtLeast(2))
     }
 
     override fun onVideoTrack(track: VideoTrack) {
