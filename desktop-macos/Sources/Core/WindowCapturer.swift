@@ -60,6 +60,9 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
 
     private var outputPool: CVPixelBufferPool?
     private var poolSize = CGSize.zero
+    /// 缓存最近使用的池子，缩放回退时复用避免重建。
+    private var poolCache = [CGSize: CVPixelBufferPool]()
+    private let maxCachedPools = 3
     private var lastThumbTime: CFTimeInterval = 0
     private let thumbInterval: CFTimeInterval = 1.0
     private let thumbMaxEdge: CGFloat = 240
@@ -309,8 +312,11 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
     }
 
     private func ensurePool(width: Int, height: Int) -> CVPixelBufferPool? {
-        if let pool = outputPool, poolSize == CGSize(width: width, height: height) {
-            return pool
+        let size = CGSize(width: width, height: height)
+        if let pool = outputPool, poolSize == size { return pool }
+        if let cached = poolCache[size] {
+            outputPool = cached; poolSize = size
+            return cached
         }
         let attrs: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
@@ -320,9 +326,13 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         ]
         var pool: CVPixelBufferPool?
         CVPixelBufferPoolCreate(kCFAllocatorDefault, nil, attrs as CFDictionary, &pool)
-        outputPool = pool
-        poolSize = CGSize(width: width, height: height)
-        return pool
+        guard let newPool = pool else { return nil }
+        while poolCache.count >= maxCachedPools {
+            poolCache.removeValue(forKey: poolCache.keys.first!)
+        }
+        poolCache[size] = newPool
+        outputPool = newPool; poolSize = size
+        return newPool
     }
 
     // MARK: - SCStreamDelegate

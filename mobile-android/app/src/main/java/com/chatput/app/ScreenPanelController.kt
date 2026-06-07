@@ -67,6 +67,7 @@ class ScreenPanelController(
     // 主画面拖动状态
     private var dragLastX = 0f
     private var dragLastY = 0f
+    private var cachedDispScale = 0f
 
     private var lastViewportSentAt = 0L
     private val flushViewport = Runnable { sendViewportNow() }
@@ -231,6 +232,7 @@ class ScreenPanelController(
                     dragLastX = event.x; dragLastY = event.y
                     isTap = true; tapX = event.x; tapY = event.y
                     scrolling = false
+                    cachedDispScale = contentDispScale()
                     rendererLpPending = true
                     main.postDelayed(rendererLongPress, 600)
                     true
@@ -251,8 +253,7 @@ class ScreenPanelController(
                         val dy = scrollBaseY - avgY
                         scrollBaseY = avgY
                         if (kotlin.math.abs(dy) > 1f) {
-                            val dispScale = contentDispScale()
-                            val scrollDy = if (dispScale > 0f) (dy / dispScale).toInt() else 0
+                            val scrollDy = if (cachedDispScale > 0f) (dy / cachedDispScale).toInt() else 0
                             if (scrollDy != 0) {
                                 session?.let { ConnectionManager.sendPointerScroll(it, 0, scrollDy) }
                             }
@@ -263,10 +264,9 @@ class ScreenPanelController(
                             isTap = false
                         }
                         if (vpW > 0 && vpH > 0 && renderer.width > 0 && renderer.height > 0) {
-                            val dispScale = contentDispScale()
-                            if (dispScale > 0f) {
-                                val dxWin = (event.x - dragLastX) / dispScale
-                                val dyWin = (event.y - dragLastY) / dispScale
+                            if (cachedDispScale > 0f) {
+                                val dxWin = (event.x - dragLastX) / cachedDispScale
+                                val dyWin = (event.y - dragLastY) / cachedDispScale
                                 dragLastX = event.x; dragLastY = event.y
                                 moveViewportTo(vpX - dxWin, vpY - dyWin)
                             }
