@@ -29,6 +29,7 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
     private var stream: SCStream?
     private var streamConfig: SCStreamConfiguration?
     private let sampleQueue = DispatchQueue(label: "chatput.window-capture")
+    private let thumbQueue = DispatchQueue(label: "chatput.window-thumb", qos: .utility)
     private let ciContext = CIContext(options: [.cacheIntermediates: false])
 
     /// 期望视口尺寸（像素），来自手机；实际生效视口受窗口尺寸 clamp。
@@ -262,8 +263,12 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         let now = CACurrentMediaTime()
         if now - lastThumbTime >= thumbInterval {
             lastThumbTime = now
-            if let jpeg = thumbnailJPEG(from: ci, srcW: srcW, srcH: srcH) {
-                onThumbnail?(jpeg)
+            let srcWC = srcW; let srcHC = srcH
+            thumbQueue.async { [weak self] in
+                guard let self = self else { return }
+                if let jpeg = self.thumbnailJPEG(from: ci, srcW: srcWC, srcH: srcHC) {
+                    self.onThumbnail?(jpeg)
+                }
             }
         }
     }
