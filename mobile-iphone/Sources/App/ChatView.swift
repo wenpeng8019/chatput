@@ -859,25 +859,27 @@ struct ChatView: View {
                             Spacer()
                             HStack {
                                 Spacer()
-                                if let thumb = screenState.thumbnail {
-                                    Image(uiImage: thumb)
-                                        .resizable()
-                                        .aspectRatio(contentMode: .fill)
-                                        .frame(width: 150, height: 110)
-                                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                                .stroke(Color.white.opacity(0.18), lineWidth: 1)
-                                        )
-                                } else {
+                                MinimapView(
+                                    thumbnail: screenState.thumbnail,
+                                    winW: screenState.metaWinW,
+                                    winH: screenState.metaWinH,
+                                    vpX: screenState.metaX,
+                                    vpY: screenState.metaY,
+                                    vpW: screenState.metaW,
+                                    vpH: screenState.metaH,
+                                    onViewportMove: { newX, newY in
+                                        guard let session else { return }
+                                        let w = screenState.metaW > 0 ? screenState.metaW : Int(videoAreaSize.width)
+                                        let h = screenState.metaH > 0 ? screenState.metaH : Int(videoAreaSize.height)
+                                        connections.sendViewport(session: session, x: newX, y: newY, w: w, h: h)
+                                    }
+                                )
+                                .frame(width: 150, height: 110)
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                .overlay(
                                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(AppColor.videoMinimap)
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                                .stroke(Color.white.opacity(0.18), lineWidth: 1)
-                                        )
-                                        .frame(width: 150, height: 110)
-                                }
+                                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                                )
                             }
                             .padding(.trailing, 16)
                             .padding(.bottom, 22)
@@ -904,12 +906,11 @@ struct ChatView: View {
                 }
                 .offset(y: yOffset)
                 .gesture(screenPanelOverlayGesture(restingOffset: restingOffset))
-                .allowsHitTesting(true)
+                .allowsHitTesting(screenPanelOpen)
 
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .allowsHitTesting(false)
             .ignoresSafeArea(edges: .top)
             .ignoresSafeArea(.keyboard, edges: .bottom)
             .animation(.timingCurve(0, 0, 0.2, 1, duration: 0.28), value: screenPanelOpen)
@@ -1094,6 +1095,116 @@ private struct VideoRendererView: UIViewRepresentable {
         if let track = coordinator.currentTrack {
             track.remove(uiView)
         }
+    }
+}
+
+/// 缩略小地图：底图是整窗缩略图 + 红框视口 + 拖拽红框平移采集区域。
+/// UIView + UIPanGestureRecognizer，meta 和手势自由竞争写入，触摸事件高频率自然占优。
+private struct MinimapView: UIViewRepresentable {
+    let thumbnail: UIImage?
+    let winW, winH, vpX, vpY, vpW, vpH: Int
+    let onViewportMove: (Int, Int) -> Void
+
+    func makeUIView(context: Context) -> MinimapUIView {
+        let v = MinimapUIView()
+        v.onViewportMove = onViewportMove
+        v.addGestureRecognizer(context.coordinator.pan)
+        return v
+    }
+
+    func updateUIView(_ v: MinimapUIView, context: Context) {
+        v.thumbnail = thumbnail
+        v.winW = CGFloat(winW); v.winH = CGFloat(winH)
+        v.vpX = CGFloat(vpX); v.vpY = CGFloat(vpY)
+        v.vpW = CGFloat(vpW); v.vpH = CGFloat(vpH)
+        v.onViewportMove = onViewportMove
+        v.setNeedsDisplay()
+    }
+
+    func makeCoordinator() -> Coordinator {
+        let c = Coordinator()
+        c.pan.addTarget(c, action: #selector(Coordinator.handlePan(_:)))
+        return c
+    }
+
+    final class Coordinator: NSObject {
+        let pan = UIPanGestureRecognizer()
+        var startVpX: CGFloat = 0
+        var startVpY: CGFloat = 0
+
+        @objc func handlePan(_ pan: UIPanGestureRecognizer) {
+            guard let v = pan.view as? MinimapUIView,
+                  v.winW > 0, v.winH > 0, v.vpW > 0, v.vpH > 0 else { return }
+            let pt = pan.location(in: v)
+            let sx = v.contentRect.width / v.winW
+            let sy = v.contentRect.height / v.winH
+
+            switch pan.state {
+            case .began:
+                let box = CGRect(x: v.contentRect.minX + v.vpX * sx,
+                                 y: v.contentRect.minY + v.vpY * sy,
+                                 width: v.vpW * sx, height: v.vpH * sy)
+                guard box.contains(pt) else { pan.state = .failed; return }
+                startVpX = v.vpX; startVpY = v.vpY
+            case .changed:
+                let trans = pan.translation(in: v)
+                let nx = max(0, min(v.winW - v.vpW, startVpX + trans.x / sx))
+                let ny = max(0, min(v.winH - v.vpH, startVpY + trans.y / sy))
+                v.vpX = nx; v.vpY = ny
+                v.onViewportMove?(Int(nx), Int(ny))
+                v.setNeedsDisplay()
+            default: break
+            }
+        }
+    }
+}
+
+private final class MinimapUIView: UIView {
+    var thumbnail: UIImage?
+    var winW: CGFloat = 0; var winH: CGFloat = 0
+    var vpX: CGFloat = 0; var vpY: CGFloat = 0
+    var vpW: CGFloat = 0; var vpH: CGFloat = 0
+    var onViewportMove: ((Int, Int) -> Void)?
+
+    fileprivate var contentRect: CGRect = .zero
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        recomputeContentRect()
+    }
+
+    private func recomputeContentRect() {
+        guard winW > 0, winH > 0, bounds.width > 0, bounds.height > 0 else { return }
+        let viewAspect = bounds.width / bounds.height
+        let winAspect = winW / winH
+        if winAspect > viewAspect {
+            let drawH = bounds.width / winAspect
+            contentRect = CGRect(x: 0, y: (bounds.height - drawH) / 2, width: bounds.width, height: drawH)
+        } else {
+            let drawW = bounds.height * winAspect
+            contentRect = CGRect(x: (bounds.width - drawW) / 2, y: 0, width: drawW, height: bounds.height)
+        }
+    }
+
+    override func draw(_ rect: CGRect) {
+        super.draw(rect)
+        recomputeContentRect()
+
+        let drawRect = contentRect.isEmpty ? bounds : contentRect
+        thumbnail?.draw(in: drawRect)
+
+        guard !contentRect.isEmpty, vpW > 0, vpH > 0 else { return }
+        let sx = contentRect.width / winW
+        let sy = contentRect.height / winH
+        let box = CGRect(x: contentRect.minX + vpX * sx,
+                         y: contentRect.minY + vpY * sy,
+                         width: vpW * sx, height: vpH * sy)
+        UIColor.red.withAlphaComponent(0.2).setFill()
+        UIBezierPath(rect: box).fill()
+        UIColor.red.setStroke()
+        let path = UIBezierPath(rect: box)
+        path.lineWidth = 2
+        path.stroke()
     }
 }
 

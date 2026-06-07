@@ -467,7 +467,7 @@ extension DesktopConnection: RTCDataChannelDelegate {
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
         if buffer.isBinary {
             if dataChannel.label == Wire.Msg.thumbChannel {
-                handleBinaryFrame(buffer.data)
+                DispatchQueue.main.async { [weak self] in self?.handleBinaryFrame(buffer.data) }
             }
             return
         }
