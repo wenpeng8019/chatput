@@ -62,6 +62,7 @@ class ScreenPanelController(
     private var vpH = 0
     private var viewportInited = false
     private var displayScale = 1.0f  // 1.0=原始, 0.9/0.8/0.75=缩小
+    private var lastMetaW = 0; private var lastMetaH = 0  // 用于检测桌面输出尺寸变化
     private val rendererLongPress = Runnable { showScaleMenu() }
     private var rendererLpPending = false
 
@@ -178,8 +179,20 @@ class ScreenPanelController(
 
     override fun onMeta(sessionId: String, winW: Int, winH: Int, scale: Float, x: Int, y: Int, w: Int, h: Int) {
         if (sessionId != session?.id) return
+        val sizeChanged = viewportInited && (w != lastMetaW || h != lastMetaH) && w > 0 && h > 0
+        lastMetaW = w; lastMetaH = h
         main.post {
             if (released) return@post
+            if (sizeChanged) {
+                Log.d(TAG, "meta: size changed -> hold renderer 120ms")
+                boundTrack?.removeSink(renderer)
+                main.postDelayed({
+                    if (!released && started) {
+                        boundTrack?.addSink(renderer)
+                        Log.d(TAG, "meta: renderer resumed")
+                    }
+                }, 120)
+            }
             this.winW = winW
             this.winH = winH
             winScale = if (scale > 0f) scale else 2f
@@ -187,8 +200,6 @@ class ScreenPanelController(
                 viewportInited = true
                 computeAndSendInitialViewport()
             }
-            // viewportInited 之后不再用桌面回填的 applied 覆盖本地 vpX/vpY，
-            // 手机为视口唯一权威，避免与拖动乐观更新打架导致抖动。
             minimap.setMeta(winW, winH, vpX.toInt(), vpY.toInt(), vpW, vpH)
         }
     }
@@ -334,6 +345,7 @@ class ScreenPanelController(
         val s = session ?: return
         if (vpW <= 0 || vpH <= 0) return
         lastViewportSentAt = System.currentTimeMillis()
+        Log.d(TAG, "send vp=(${vpX.toInt()},${vpY.toInt()} ${vpW}x$vpH)")
         ConnectionManager.sendViewport(s, vpX.toInt(), vpY.toInt(), vpW, vpH)
     }
 
@@ -403,6 +415,7 @@ class ScreenPanelController(
     }
 
     private fun applyScale(scale: Float) {
+        val oldScale = displayScale
         displayScale = scale
         val rw = renderer.width; val rh = renderer.height
         if (rw <= 0 || rh <= 0 || winW <= 0 || winH <= 0) return
@@ -418,6 +431,7 @@ class ScreenPanelController(
         vpW = newW; vpH = newH
         vpX = (cx - newW / 2f).coerceIn(0f, (winW - newW).coerceAtLeast(0).toFloat())
         vpY = (cy - newH / 2f).coerceIn(0f, (winH - newH).coerceAtLeast(0).toFloat())
+        Log.d(TAG, "scale $oldScale->$scale vp=(${vpX.toInt()},${vpY.toInt()} ${vpW}x$vpH)")
         minimap.setMeta(winW, winH, vpX.toInt(), vpY.toInt(), vpW, vpH)
         sendViewportNow()
     }
