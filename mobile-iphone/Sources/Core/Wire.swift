@@ -11,6 +11,7 @@ enum Wire {
         static let channelLabel = "input"
         static let session = "session"
         static let sessionClosed = "session-closed"
+        static let sessionInputLost = "session-input-lost"
         static let text = "text"
         static let action = "action"
         static let hello = "hello"

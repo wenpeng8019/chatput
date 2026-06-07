@@ -57,6 +57,9 @@ struct ChatView: View {
     @State private var inputViewTop: CGFloat = 0
     @State private var keyboardAnimationDuration: Double = 0.25
     @State private var keyboardAnimationCurve: UIView.AnimationCurve = .easeInOut
+    @AppStorage("debugHotZones") private var debugHotZones = false
+    @State private var headerTapCount = 0
+    @State private var headerTapReset: DispatchWorkItem?
 
     private var session: DesktopSession? { connections.session(connectionId: connectionId, sessionId: sessionId) }
 
@@ -114,8 +117,14 @@ struct ChatView: View {
         .navigationBarTitleDisplayMode(.inline)
         .confirmationDialog("更多操作", isPresented: $showHeaderActions, titleVisibility: .hidden) {
             Button("查看屏幕") { openScreenPanel() }
+            Button("撤销") { sendAction("undo") }
             Button("全选") { sendAction("selectAll") }
             Button("清空") { sendAction("clear"); showToast("已清空") }
+            if debugHotZones {
+                Button("隐藏热区（调试）") { debugHotZones = false }
+            } else {
+                Button("显示热区（调试）") { debugHotZones = true }
+            }
             Button("取消", role: .cancel) {}
         }
         .onChange(of: inputMode) { mode in
@@ -181,6 +190,18 @@ struct ChatView: View {
             }
             .contentShape(Rectangle())
             .gesture(screenPanelOpenGesture())
+            .onTapGesture {
+                headerTapCount += 1
+                headerTapReset?.cancel()
+                if headerTapCount >= 5 {
+                    headerTapCount = 0
+                    showHeaderActions = true
+                } else {
+                    let work = DispatchWorkItem { headerTapCount = 0 }
+                    headerTapReset = work
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
+                }
+            }
             Button { showHeaderActions = true } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 21, weight: .bold))
@@ -263,53 +284,59 @@ struct ChatView: View {
     // MARK: - voice input view（真实语音面板）
     private func voiceInputView(_ session: DesktopSession) -> some View {
         VStack(spacing: 8) {
-            Text(hint)
+            Text(isInputLost ? "↑↓←→ 移动光标" : hint)
                 .font(.system(size: 13))
                 .foregroundStyle(AppColor.textTertiary)
-                .opacity(Double(1 - pullProgress))
+                .opacity(isInputLost ? 1 : Double(1 - pullProgress))
             composerBody(session)
-                // 误触保护：仅面板四周窄带触发上划，中间麦克风/侧按钮区不抢手势。
+                // 方向模式下不显示上拉热区
                 .overlay(alignment: .top) {
-                    HStack(spacing: 0) {
-                        Rectangle()
-                            .fill(Color.black.opacity(0.0001))
-                            .frame(maxWidth: .infinity)
-                            .gesture(pullGesture())
-                        Color.clear
-                            .frame(width: 140)
-                            .allowsHitTesting(false)
-                        Rectangle()
-                            .fill(Color.black.opacity(0.0001))
-                            .frame(maxWidth: .infinity)
-                            .gesture(pullGesture())
+                    if !isInputLost {
+                        HStack(spacing: 0) {
+                            Rectangle()
+                                .fill(Color.black.opacity(0.0001))
+                                .frame(maxWidth: .infinity)
+                                .gesture(pullGesture())
+                            Color.clear
+                                .frame(width: 140)
+                                .allowsHitTesting(false)
+                            Rectangle()
+                                .fill(Color.black.opacity(0.0001))
+                                .frame(maxWidth: .infinity)
+                                .gesture(pullGesture())
+                        }
+                        .frame(height: 28 + 10)
+                        .offset(y: -10)
                     }
-                    .frame(height: 28 + 10)
-                    .offset(y: -10)
                 }
                 .overlay(alignment: .leading) {
-                    Rectangle()
-                        .fill(Color.black.opacity(0.0001))
-                        .frame(width: 20 + 10)
-                        .frame(maxHeight: .infinity)
-                        .padding(.top, -10)
-                        .offset(x: -10)
-                        .gesture(pullGesture())
+                    if !isInputLost {
+                        Rectangle()
+                            .fill(Color.black.opacity(0.0001))
+                            .frame(width: 20 + 10)
+                            .frame(maxHeight: .infinity)
+                            .padding(.top, -10)
+                            .offset(x: -10)
+                            .gesture(pullGesture())
+                    }
                 }
                 .overlay(alignment: .trailing) {
-                    Rectangle()
-                        .fill(Color.black.opacity(0.0001))
-                        .frame(width: 20 + 10)
-                        .frame(maxHeight: .infinity)
-                        .padding(.top, -10)
-                        .offset(x: 10)
-                        .gesture(pullGesture())
+                    if !isInputLost {
+                        Rectangle()
+                            .fill(Color.black.opacity(0.0001))
+                            .frame(width: 20 + 10)
+                            .frame(maxHeight: .infinity)
+                            .padding(.top, -10)
+                            .offset(x: 10)
+                            .gesture(pullGesture())
+                    }
                 }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 18)
         .padding(.top, 8)
         .padding(.bottom, 8)
-        .offset(y: -TalkUX.composerLift * pullProgress)
+        .offset(y: isInputLost ? 0 : -TalkUX.composerLift * pullProgress)
         .background(
             GeometryReader { proxy in
                 Color.clear
@@ -345,7 +372,33 @@ struct ChatView: View {
             }
     }
 
+    private var composerCornerArcs: some View {
+        HStack {
+            CornerArc(mirrored: false)
+                .stroke(AppColor.textTertiary.opacity(0.28),
+                        style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                .frame(width: 34, height: 34)
+            Spacer()
+            CornerArc(mirrored: true)
+                .stroke(AppColor.textTertiary.opacity(0.28),
+                        style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
+                .frame(width: 34, height: 34)
+        }
+        .allowsHitTesting(false)
+    }
+
+    private var isInputLost: Bool { session?.inputAvailable == false }
+
+    @ViewBuilder
     private func composerBody(_ session: DesktopSession) -> some View {
+        if isInputLost {
+            dpadComposerBody(session)
+        } else {
+            voiceComposerBody(session)
+        }
+    }
+
+    private func voiceComposerBody(_ session: DesktopSession) -> some View {
         HStack {
             HoldProgressButton(
                 systemName: "delete.left",
@@ -373,20 +426,75 @@ struct ChatView: View {
             }
         )
         .panel(cornerRadius: 34)
-        .overlay(alignment: .top) {
+        .overlay(alignment: .top) { composerCornerArcs }
+    }
+
+    private func dpadComposerBody(_ session: DesktopSession) -> some View {
+        VStack(spacing: 0) {
             HStack {
-                CornerArc(mirrored: false)
-                    .stroke(AppColor.textTertiary.opacity(0.28),
-                            style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
-                    .frame(width: 34, height: 34)
+                Button { sendDpadAction("escape") } label: {
+                    Image(systemName: "escape")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(AppColor.textSecondary)
+                        .frame(width: 56, height: 56)
+                        .background(AppColor.surfaceAlt)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
                 Spacer()
-                CornerArc(mirrored: true)
-                    .stroke(AppColor.textTertiary.opacity(0.28),
-                            style: StrokeStyle(lineWidth: 1.8, lineCap: .round))
-                    .frame(width: 34, height: 34)
+                dpadCenter(session)
+                Spacer()
+                Button { sendDpadAction("enter") } label: {
+                    Image(systemName: "return")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(AppColor.textSecondary)
+                        .frame(width: 56, height: 56)
+                        .background(AppColor.surfaceAlt)
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
             }
-            .allowsHitTesting(false)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 3)
         }
+        .panel(cornerRadius: 34)
+    }
+
+    @ViewBuilder
+    private func dpadCenter(_ session: DesktopSession) -> some View {
+        let r: CGFloat = 39
+        ZStack {
+            Image(systemName: "arrow.up.left.and.arrow.down.right")
+                .font(.system(size: 34, weight: .semibold))
+                .foregroundStyle(AppColor.accent)
+                .frame(width: 78, height: 78)
+                .background(Circle().fill(AppColor.accent.opacity(0.1)))
+                .shadow(color: AppColor.accent.opacity(0.18), radius: 14, y: 4)
+            dpadHotZone(offsetX: 0, offsetY: -r, size: r, action: "cursorUp")
+            dpadHotZone(offsetX: 0, offsetY: r, size: r, action: "cursorDown")
+            dpadHotZone(offsetX: -r, offsetY: 0, size: r, action: "cursorLeft")
+            dpadHotZone(offsetX: r, offsetY: 0, size: r, action: "cursorRight")
+        }
+        .frame(width: 110, height: 110)
+    }
+
+    private func dpadHotZone(offsetX: CGFloat, offsetY: CGFloat, size: CGFloat, action: String) -> some View {
+        Rectangle()
+            .fill(debugHotZones ? AppColor.accent.opacity(0.2) : Color.clear)
+            .frame(width: size, height: size)
+            .offset(x: offsetX, y: offsetY)
+            .contentShape(Rectangle())
+            .onTapGesture { sendDpadAction(action) }
+            .overlay {
+                if debugHotZones {
+                    Rectangle().stroke(AppColor.accent, lineWidth: 1)
+                }
+            }
+    }
+
+    private func sendDpadAction(_ action: String) {
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        sendAction(action)
     }
 
     private var directionHints: some View {

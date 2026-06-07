@@ -35,6 +35,7 @@ struct DesktopSession: Identifiable, Hashable {
     var device: String
     var messages: [ChatMessage] = []
     var isActive: Bool = false
+    var inputAvailable: Bool = true
 
     var id: String { "\(connectionId)#\(sessionId)" }
     var displayApp: String { app.isEmpty ? "未知应用" : app }

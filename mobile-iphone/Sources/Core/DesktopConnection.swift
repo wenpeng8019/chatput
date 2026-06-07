@@ -185,18 +185,32 @@ final class DesktopConnection: NSObject {
             signaling?.sendMessage(object)
             return
         }
-        guard let data = try? JSONSerialization.data(withJSONObject: object),
-              let channel = dataChannel,
-              channel.readyState == .open else { return }
-        channel.sendData(RTCDataBuffer(data: data, isBinary: false))
+        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
+            return
+        }
+        guard let channel = dataChannel else {
+            return
+        }
+        guard channel.readyState == .open else {
+            return
+        }
+        let sent = channel.sendData(RTCDataBuffer(data: data, isBinary: false))
     }
 
     private func handlePeerMessage(_ object: [String: Any]) {
-        switch object[Wire.Key.type] as? String {
+        let type = object[Wire.Key.type] as? String ?? "?"
+        switch type {
         case Wire.Msg.session:
             upsertSession(object)
         case Wire.Msg.sessionClosed:
             if let sessionId = object["sessionId"] as? String { removeSession(sessionId) }
+        case Wire.Msg.sessionInputLost:
+            if let sessionId = object["sessionId"] as? String {
+                if let idx = sessions.firstIndex(where: { $0.sessionId == sessionId }) {
+                    sessions[idx].inputAvailable = false
+                    onSessionsChanged?(connectionId)
+                }
+            }
         default:
             break
         }
@@ -204,6 +218,8 @@ final class DesktopConnection: NSObject {
 
     private func upsertSession(_ object: [String: Any]) {
         guard let sessionId = object["sessionId"] as? String else { return }
+        let app = object["app"] as? String ?? ""
+        let title = object["title"] as? String ?? ""
         let device = object["device"] as? String ?? ""
         if !device.isEmpty {
             deviceLabel = device
@@ -215,6 +231,7 @@ final class DesktopConnection: NSObject {
             sessions[index].title = object["title"] as? String ?? sessions[index].title
             if !device.isEmpty { sessions[index].device = device }
             sessions[index].isActive = true
+            sessions[index].inputAvailable = true
             let updated = sessions.remove(at: index)
             sessions.insert(updated, at: 0)
         } else {
@@ -318,7 +335,9 @@ extension DesktopConnection: RTCPeerConnectionDelegate {
     }
 
     func peerConnection(_ peerConnection: RTCPeerConnection, didOpen dataChannel: RTCDataChannel) {
-        self.dataChannel = dataChannel
+        if dataChannel.label == Wire.Msg.channelLabel {
+            self.dataChannel = dataChannel
+        }
         dataChannel.delegate = self
     }
 
@@ -331,8 +350,14 @@ extension DesktopConnection: RTCPeerConnectionDelegate {
 }
 
 extension DesktopConnection: RTCDataChannelDelegate {
+    @objc(dataChannelDidChangeState:)
     func dataChannelDidChangeState(_ dataChannel: RTCDataChannel) {
+        guard dataChannel.label == Wire.Msg.channelLabel else { return }
         if dataChannel.readyState == .open {
+            if self.dataChannel == nil {
+                self.dataChannel = dataChannel
+                dataChannel.delegate = self
+            }
             markConnected("P2P 已连接")
             sendHello()
         }
@@ -341,8 +366,13 @@ extension DesktopConnection: RTCDataChannelDelegate {
         }
     }
 
+    @objc(dataChannel:didReceiveMessageWithBuffer:)
     func dataChannel(_ dataChannel: RTCDataChannel, didReceiveMessageWith buffer: RTCDataBuffer) {
-        guard let object = try? JSONSerialization.jsonObject(with: buffer.data) as? [String: Any] else { return }
+        if buffer.isBinary { return }
+        guard let object = try? JSONSerialization.jsonObject(with: buffer.data) as? [String: Any] else {
+            let raw = String(data: buffer.data, encoding: .utf8) ?? "<not utf8>"
+            return
+        }
         DispatchQueue.main.async { [weak self] in self?.handlePeerMessage(object) }
     }
 }
