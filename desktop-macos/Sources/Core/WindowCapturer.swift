@@ -138,24 +138,14 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         windowPixelSize = .zero
     }
 
-    /// 更新视口（逻辑坐标 points，左上角原点）。下一帧即生效。
-    /// 静止画面下强制 SCStream 重采一帧 + 缓存重裁双保险。
+    /// 更新视口（逻辑坐标 points，左上角原点）。立即用缓存帧重裁输出。
     func setViewport(x: Int, y: Int, w: Int, h: Int) {
         lock.lock()
-        let oldW = desiredViewport.width; let oldH = desiredViewport.height
         desiredViewport = CGSize(width: CGFloat(max(1, w)), height: CGFloat(max(1, h)))
         viewportOrigin = CGPoint(x: CGFloat(max(0, x)), y: CGFloat(max(0, y)))
-        let sizeChanged = oldW != desiredViewport.width || oldH != desiredViewport.height
         viewportChanged = true
         lock.unlock()
-        // 尺寸不变时立即推缓存帧；尺寸变时等重协商完再推（避免推两次）
-        if sizeChanged {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-                self?.refreshFromCacheIfNeeded()
-            }
-        } else {
-            refreshFromCacheIfNeeded()
-        }
+        refreshFromCacheIfNeeded()
     }
 
     /// 用缓存帧 + 当前视口重裁输出，避免静止画面下视口拖拽不更新。
@@ -235,7 +225,6 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         // 缓存原始帧供视口变化时重裁
         lastFrameTime = CACurrentMediaTime(); cachedSrcImage = ci; cachedSrcW = srcW; cachedSrcH = srcH
         cachedSrcTs = Int64(CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sampleBuffer)) * 1_000_000_000)
-        viewportChanged = false
         let scale = backingScale
 
         lock.lock()
@@ -251,6 +240,7 @@ final class WindowCapturer: NSObject, SCStreamOutput, SCStreamDelegate {
         let physRect = CGRect(x: physOx, y: physOy, width: physVpW, height: physVpH)
         let appliedLogical = CGRect(x: physOx / scale, y: physOy / scale,
                                     width: physVpW / scale, height: physVpH / scale)
+        viewportChanged = false
         lock.unlock()
 
         let ts = cachedSrcTs

@@ -48,6 +48,7 @@ final class WebRTCManager: NSObject {
     private var videoCapturer: RTCVideoCapturer?
     private var lastAdaptW: Int32 = 0
     private var lastAdaptH: Int32 = 0
+    private var renegotiationCompletion: (() -> Void)?
 
     private let iceServers = [RTCIceServer(urlStrings: ["stun:stun.l.google.com:19302"])]
 
@@ -114,7 +115,12 @@ final class WebRTCManager: NSObject {
             let type = RTCSessionDescription.type(for: typeStr)
             let desc = RTCSessionDescription(type: type, sdp: sdpStr)
             pc?.setRemoteDescription(desc) { [weak self] err in
-                if let err = err { self?.onLog?("setRemote 失败: \(err.localizedDescription)") }
+                guard let self = self else { return }
+                if let err = err { self.onLog?("setRemote 失败: \(err.localizedDescription)") }
+                if type == .answer, let completion = self.renegotiationCompletion {
+                    self.renegotiationCompletion = nil
+                    completion()
+                }
             }
         } else if let cand = data["candidate"] as? [String: Any],
                   let sdpStr = cand["candidate"] as? String {
@@ -171,14 +177,11 @@ final class WebRTCManager: NSObject {
         }
         let w = Int32(CVPixelBufferGetWidth(pixelBuffer))
         let h = Int32(CVPixelBufferGetHeight(pixelBuffer))
-        // 锁定输出格式为采集分辨率，禁止 WebRTC 自适应降采样（否则画面发虚）。
         if w != lastAdaptW || h != lastAdaptH {
             lastAdaptW = w; lastAdaptH = h
-            // 先重协商，让对端解码器就绪，再改编码输出尺寸
-            renegotiate()
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            let fps = Int32(AppSettings.shared.screenFPS.value)
+            renegotiate { [weak self] in
                 guard let self = self else { return }
-                let fps = Int32(AppSettings.shared.screenFPS.value)
                 self.videoSource?.adaptOutputFormat(toWidth: w, height: h, fps: fps)
                 self.raiseVideoBitrate()
             }
@@ -205,8 +208,10 @@ final class WebRTCManager: NSObject {
     }
 
     /// 分辨率变化后重协商 SDP，让对端解码器更新尺寸。
-    private func renegotiate() {
+    /// 重协商完成后调用 completion（等远端 answer 到达）。
+    private func renegotiate(completion: @escaping () -> Void) {
         guard let pc = pc else { return }
+        renegotiationCompletion = completion
         let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
         pc.offer(for: constraints) { [weak self] sdp, error in
             guard let self = self, let sdp = sdp else { return }
@@ -225,6 +230,7 @@ final class WebRTCManager: NSObject {
         videoCapturer = nil
         lastAdaptW = 0
         lastAdaptH = 0
+        renegotiationCompletion = nil
         pc?.close()
         pc = nil
     }
