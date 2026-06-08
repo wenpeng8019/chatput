@@ -1165,12 +1165,16 @@ final class MinimapUIView: UIView {
     var vpX: CGFloat = 0; var vpY: CGFloat = 0
     var vpW: CGFloat = 0; var vpH: CGFloat = 0
     var onViewportMove: ((Int, Int) -> Void)?
+    var onLongPress: (() -> Void)?
     var isDragging: Bool { dragging }
 
     fileprivate var contentRect: CGRect = .zero
     private var dragging = false
     private var dragTouchOffsetX: CGFloat = 0
     private var dragTouchOffsetY: CGFloat = 0
+    private var longPressPending = false
+    private var longPressWork: DispatchWorkItem?
+    private var longPressStart: CGPoint = .zero
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -1207,7 +1211,7 @@ final class MinimapUIView: UIView {
         UIBezierPath(rect: box).fill()
         UIColor.red.setStroke()
         let path = UIBezierPath(rect: box)
-        path.lineWidth = 2
+        path.lineWidth = 1.5
         path.stroke()
     }
 
@@ -1217,23 +1221,45 @@ final class MinimapUIView: UIView {
         let sx = contentRect.width / winW; let sy = contentRect.height / winH
         let box = CGRect(x: contentRect.minX + vpX * sx, y: contentRect.minY + vpY * sy,
                          width: vpW * sx, height: vpH * sy)
-        guard box.insetBy(dx: -15, dy: -15).contains(pt) else { return }
-        dragging = true
-        dragTouchOffsetX = pt.x - box.minX; dragTouchOffsetY = pt.y - box.minY
+        if box.insetBy(dx: -15, dy: -15).contains(pt) {
+            dragging = true
+            dragTouchOffsetX = pt.x - box.minX; dragTouchOffsetY = pt.y - box.minY
+        } else {
+            longPressPending = true; longPressStart = pt
+            let w = DispatchWorkItem { [weak self] in
+                self?.longPressPending = false
+                self?.onLongPress?()
+            }
+            longPressWork = w
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: w)
+        }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard dragging, let pt = touches.first?.location(in: self) else { return }
-        let sx = contentRect.width / winW; let sy = contentRect.height / winH
-        let nx = max(0, min(winW - vpW, (pt.x - dragTouchOffsetX - contentRect.minX) / sx))
-        let ny = max(0, min(winH - vpH, (pt.y - dragTouchOffsetY - contentRect.minY) / sy))
-        vpX = nx; vpY = ny
-        onViewportMove?(Int(nx), Int(ny))
-        setNeedsDisplay()
+        if dragging, let pt = touches.first?.location(in: self) {
+            let sx = contentRect.width / winW; let sy = contentRect.height / winH
+            let nx = max(0, min(winW - vpW, (pt.x - dragTouchOffsetX - contentRect.minX) / sx))
+            let ny = max(0, min(winH - vpH, (pt.y - dragTouchOffsetY - contentRect.minY) / sy))
+            vpX = nx; vpY = ny
+            onViewportMove?(Int(nx), Int(ny))
+            setNeedsDisplay()
+        } else if longPressPending, let pt = touches.first?.location(in: self) {
+            let dx = pt.x - longPressStart.x; let dy = pt.y - longPressStart.y
+            if dx*dx + dy*dy > 64 { cancelLongPress() }
+        }
     }
 
-    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { dragging = false }
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { dragging = false }
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        dragging = false; cancelLongPress()
+    }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        dragging = false; cancelLongPress()
+    }
+
+    private func cancelLongPress() {
+        longPressPending = false
+        longPressWork?.cancel(); longPressWork = nil
+    }
 }
 
 /// 面板顶部圆角同心弧线，半径等于面板 cornerRadius，曲率与面板边缘完全一致。
