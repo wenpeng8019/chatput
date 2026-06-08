@@ -29,6 +29,7 @@ final class ChatViewController: UIViewController {
     private var messageListToTextBar: NSLayoutConstraint?
     private var kbHeight: CGFloat = 0
     private var isTextMode = false
+    private var cancellables = Set<AnyCancellable>()
 
     override var prefersStatusBarHidden: Bool { screenPanel.isOpen }
 
@@ -49,6 +50,13 @@ final class ChatViewController: UIViewController {
         navigationController?.interactivePopGestureRecognizer?.isEnabled = true
         setupHeader(); setupMessages(); setupInput(); setupScreenPanel()
         reloadMessages()
+        // Observe session inputAvailable changes (from desktop or engineering menu)
+        connections?.$sessions.receive(on: DispatchQueue.main).sink { [weak self] _ in
+            guard let self, let s = self.session else { return }
+            let dp = s.inputAvailable == false
+            self.dPadMode = dp
+            self.inputBar.isDpadMode = dp
+        }.store(in: &cancellables)
     }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -79,6 +87,7 @@ final class ChatViewController: UIViewController {
 
     private func setupMessages() {
         messageList.transform = CGAffineTransform(scaleX: 1, y: -1)
+        messageList.contentInset.top = 8  // visual bottom padding (inverted table)
         messageList.register(MessageCell.self, forCellReuseIdentifier: "c")
         messageList.backgroundColor = .clear; messageList.separatorStyle = .none
         messageList.dataSource = self; messageList.estimatedRowHeight = 60
@@ -198,7 +207,7 @@ final class ChatViewController: UIViewController {
         screenPanel.onViewportMove = { [weak self] x, y in
             guard let self, let s = self.session, self.screenState.metaW > 0 else { return }
             self.connections?.sendViewport(session: s, x: x, y: y,
-                                           w: self.screenState.metaW, h: self.screenState.metaH)
+                                           w: Int(self.screenPanel.minimapVpW), h: Int(self.screenPanel.minimapVpH))
         }
         screenPanel.onViewportResize = { [weak self] x, y, w, h in
             guard let self, let s = self.session else { return }
@@ -278,8 +287,9 @@ final class ChatViewController: UIViewController {
             guard let self else { return }
             self.screenShadow.transform = CGAffineTransform(translationX: 0, y: offset)
             self.collapseZone?.transform = CGAffineTransform(translationX: 0, y: offset)
-            let revealed = self.screenPanel.curtainHeight + offset
-            self.screenShadow.isHidden = revealed < 8
+            let show = !self.screenPanel.isHidden
+            self.screenShadow.isHidden = !show
+            self.collapseZone?.isHidden = !show
         }
 
         // Header swipe-down gesture to open screen curtain
@@ -290,8 +300,22 @@ final class ChatViewController: UIViewController {
     private func showMenu() {
         let a = UIAlertController(title: nil, message: nil, preferredStyle: .actionSheet)
         a.addAction(UIAlertAction(title: "查看屏幕", style: .default) { [weak self] _ in self?.openScreenPanel() })
+        a.addAction(UIAlertAction(title: "撤销", style: .default) { [weak self] _ in
+            self?.sendAction("undo")
+        })
+        a.addAction(UIAlertAction(title: "全选", style: .default) { [weak self] _ in
+            self?.sendAction("selectAll")
+        })
+        a.addAction(UIAlertAction(title: "清空", style: .default) { [weak self] _ in
+            self?.sendAction("clear")
+        })
         a.addAction(UIAlertAction(title: "取消", style: .cancel))
         present(a, animated: true)
+    }
+
+    private func sendAction(_ action: String) {
+        guard let s = session else { return }
+        connections?.sendAction(session: s, action: action)
     }
 
     private var debugHotZones = false
@@ -308,6 +332,7 @@ final class ChatViewController: UIViewController {
         })
         a.addAction(UIAlertAction(title: "文本/方向交互切换", style: .default) { [weak self] _ in
             self?.dPadMode.toggle()
+            self?.inputBar.isDpadMode = self?.dPadMode ?? false
         })
         a.addAction(UIAlertAction(title: "关闭", style: .cancel))
         present(a, animated: true)
@@ -611,6 +636,18 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
     var onSend: ((String) -> Void)?; var onAction: ((String) -> Void)?
     var onTextModeRequest: (() -> Void)?
     private let hintLabel = UILabel()
+
+    var isDpadMode = false {
+        didSet {
+            guard isDpadMode != oldValue else { return }
+            refreshDpadState()
+        }
+    }
+
+    // D-pad directional tap zones (matches Android dpadViews)
+    private var dpadZones: [UIView] = []
+    // Grab handle corner dots (hidden in D-pad mode)
+    private var grabDots: [UIView] = []
     private let composerPanel = UIView()
     private let deleteBtn = UIButton(type: .system)
     private let micBtn = UIButton(type: .system)
@@ -682,6 +719,18 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
         composerPull.delegate = self
         addGestureRecognizer(composerPull)
 
+        // D-pad tap zones (added to self, positioned above composerPanel)
+        for i in 0..<4 {
+            let z = UIView()
+            z.backgroundColor = .clear; z.isHidden = true
+            let tap = UITapGestureRecognizer(target: self, action: #selector(dpadTapped(_:)))
+            z.addGestureRecognizer(tap)
+            z.tag = i  // 0=up, 1=down, 2=left, 3=right
+            addSubview(z)
+            dpadZones.append(z)
+        }
+        // Positioned in layoutSubviews via refreshDpadState
+
         // Text mode switching delegated to ChatViewController via onTextModeRequest
 
         // Return button (56x56, surfaceAlt bg)
@@ -703,6 +752,7 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
         }
         let gTL = (a: grabDots[0], b: grabDots[1], c: grabDots[2])  // top-left triangle
         let gTR = (a: grabDots[3], b: grabDots[4], c: grabDots[5])  // top-right triangle
+        self.grabDots = grabDots
 
         // Direction hints (chevrons + dots around mic)
         let tint = UIColor(red: 1, green: 0.58, blue: 0.22, alpha: 0.34)
@@ -829,17 +879,29 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
     @objc private func tapDelete() { onAction?("backspace") }
 
     // Hold gesture handlers for side buttons
-    override func layoutSubviews() { super.layoutSubviews() }
+    override func layoutSubviews() { super.layoutSubviews(); positionDpadZones() }
 
     private let holdDuration: TimeInterval = 0.75
 
     // Delete button
-    @objc private func deleteTouchDown() { beginHold(ring: deleteRing, btn: deleteBtn, work: &deleteHoldWork, onHold: { self.onAction?("clear") }) }
-    @objc private func deleteTouchUp() { endHold(ring: deleteRing, btn: deleteBtn, work: &deleteHoldWork, onTap: { self.onAction?("backspace") }) }
+    @objc private func deleteTouchDown() {
+        if isDpadMode { return }
+        beginHold(ring: deleteRing, btn: deleteBtn, work: &deleteHoldWork, onHold: { self.onAction?("clear") })
+    }
+    @objc private func deleteTouchUp() {
+        if isDpadMode { UIImpactFeedbackGenerator(style: .light).impactOccurred(); onAction?("escape"); return }
+        endHold(ring: deleteRing, btn: deleteBtn, work: &deleteHoldWork, onTap: { self.onAction?("backspace") })
+    }
 
     // Return button
-    @objc private func returnTouchDown() { beginHold(ring: returnRing, btn: returnBtn, work: &returnHoldWork, onHold: { self.onAction?("enter") }) }
-    @objc private func returnTouchUp() { endHold(ring: returnRing, btn: returnBtn, work: &returnHoldWork, onTap: { self.onAction?("shiftEnter") }) }
+    @objc private func returnTouchDown() {
+        if isDpadMode { return }
+        beginHold(ring: returnRing, btn: returnBtn, work: &returnHoldWork, onHold: { self.onAction?("enter") })
+    }
+    @objc private func returnTouchUp() {
+        if isDpadMode { UIImpactFeedbackGenerator(style: .light).impactOccurred(); onAction?("enter"); return }
+        endHold(ring: returnRing, btn: returnBtn, work: &returnHoldWork, onTap: { self.onAction?("shiftEnter") })
+    }
 
     private func beginHold(ring: CAShapeLayer, btn: UIButton, work: inout DispatchWorkItem?, onHold: @escaping () -> Void) {
         btn.transform = CGAffineTransform(scaleX: 0.94, y: 0.94)
@@ -1078,6 +1140,61 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
 
     func textFieldShouldReturn(_ tf: UITextField) -> Bool { sendText(); return true }
 
+    // MARK: - D-pad mode
+
+    private func refreshDpadState() {
+        let dp = isDpadMode
+        // Icons: mic→dpad arrows, delete→escape (matching Android ic_dpad / ic_nav_esc)
+        micBtn.setImage(UIImage(systemName: dp ? "arrow.up.and.down.and.arrow.left.and.right" : "mic.fill",
+                                 withConfiguration: UIImage.SymbolConfiguration(pointSize: dp ? 20 : 30, weight: .semibold)), for: .normal)
+        deleteBtn.setImage(UIImage(systemName: dp ? "escape" : "delete.left",
+                                    withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold)), for: .normal)
+        hintLabel.text = dp ? "↑↓←→ 移动光标" : "按住说话"
+        // D-pad zones visible (on top of mic), direction dots + grab dots hidden
+        dpadZones.forEach { $0.isHidden = !dp; if dp { bringSubviewToFront($0) } }
+        [dotNear1, dotNear2, dotFar1, dotFar2].forEach { $0.isHidden = dp }
+        grabDots.forEach { $0.isHidden = dp }
+        // Mic button is decorative only in D-pad mode
+        micBtn.isUserInteractionEnabled = !dp
+        // Disable pull-up in d-pad mode (drag handle concept)
+        if dp, let pullGesture = gestureRecognizers?.first(where: { $0 is UIPanGestureRecognizer && $0.delegate === self }) {
+            pullGesture.isEnabled = false
+        } else if !dp, let pullGesture = gestureRecognizers?.first(where: { $0 is UIPanGestureRecognizer && $0.delegate === self }) {
+            pullGesture.isEnabled = true
+        }
+        // Position D-pad zones around mic button
+        setNeedsLayout(); layoutIfNeeded()
+    }
+
+    @objc private func dpadTapped(_ sender: UITapGestureRecognizer) {
+        let actions = ["cursorUp", "cursorDown", "cursorLeft", "cursorRight"]
+        guard let v = sender.view, v.tag < actions.count else { return }
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+        onAction?(actions[v.tag])
+    }
+
+    // D-pad zone positions: 3×3 grid centered on mic, side = (panelH + 2*margin) / 3
+    private func positionDpadZones() {
+        guard dpadZones.count == 4 else { return }
+        let margin: CGFloat = 24
+        let side = (composerPanel.bounds.height + 2 * margin) / 3
+        let h = side / 2
+        let micCenter = micBtn.convert(CGPoint(x: micBtn.bounds.midX, y: micBtn.bounds.midY), to: self)
+        let cy = micCenter.y; let cx = micCenter.x
+        let gridTop = hintLabel.frame.maxY  // up zone top = hint bottom
+
+        // 3×3 grid cells (row, col), only cross cells (up/down/left/right) are active
+        // up:   (0,1)  center: (1,1) is mic    corners: empty
+        // left: (1,0)  right:  (1,2)           down:  (2,1)
+        let upFrame   = CGRect(x: cx - h,  y: gridTop,           width: side, height: side)
+        let dnFrame   = CGRect(x: cx - h,  y: gridTop + 2 * side, width: side, height: side)
+        let lfFrame   = CGRect(x: cx - h - side, y: gridTop + side, width: side, height: side)
+        let rtFrame   = CGRect(x: cx + h,  y: gridTop + side, width: side, height: side)
+
+        let frames = [upFrame, dnFrame, lfFrame, rtFrame]
+        for i in 0..<4 { dpadZones[i].frame = frames[i] }
+    }
+
     // MARK: - Hot zone visualization
 
     private var hotZoneOverlays: [UIView] = []
@@ -1085,6 +1202,16 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
     func setHotZonesVisible(_ visible: Bool) {
         if visible && hotZoneOverlays.isEmpty { createHotZoneOverlays() }
         hotZoneOverlays.forEach { $0.isHidden = !visible }
+        // D-pad zones: cycling colors matching Android (red/green/blue/yellow)
+        let dpadColors: [UIColor] = [
+            UIColor(red: 1, green: 0, blue: 0, alpha: 0.25),
+            UIColor(red: 0, green: 1, blue: 0, alpha: 0.25),
+            UIColor(red: 0, green: 0, blue: 1, alpha: 0.25),
+            UIColor(red: 1, green: 1, blue: 0, alpha: 0.25),
+        ]
+        for i in 0..<min(dpadZones.count, dpadColors.count) {
+            dpadZones[i].backgroundColor = visible ? dpadColors[i] : .clear
+        }
     }
 
     private func createHotZoneOverlays() {
@@ -1176,6 +1303,8 @@ final class ScreenPanelView: UIView {
 
     private let videoView = RTCMTLVideoView(); private let minimap = MinimapUIView()
     private var videoTrack: RTCVideoTrack?
+    private let loadingSpinner = UIActivityIndicatorView(style: .large)
+    private let loadingLabel = UILabel()
     private let grabBar = UIView(); private let grabPill = UIView()
     private var panelHeight: CGFloat = 0
     private var baseOffset: CGFloat = 0
@@ -1186,6 +1315,8 @@ final class ScreenPanelView: UIView {
     var curtainHeight: CGFloat { max(panelHeight, 1) }
     var videoBounds: CGRect { videoView.bounds }
     var visualOffset: CGFloat { curtainOffset + keyboardLift }
+    var minimapVpW: CGFloat { minimap.vpW }
+    var minimapVpH: CGFloat { minimap.vpH }
     private var displayScale: CGFloat = 1.0
 
     var curtainOffset: CGFloat = 0
@@ -1215,11 +1346,11 @@ final class ScreenPanelView: UIView {
 
     private enum MMPos: String, CaseIterable {
         case topLeft = "左上"
-        case topRight = "右上"
+        case bottomLeft = "左下"
         case left = "左侧中"
         case right = "右侧中"
-        case bottomLeft = "左下"
         case bottomRight = "右下"
+        case topRight = "右上"
     }
 
     override init(frame: CGRect) {
@@ -1246,6 +1377,13 @@ final class ScreenPanelView: UIView {
         let videoPan = UIPanGestureRecognizer(target: self, action: #selector(handleVideoPan(_:)))
         videoPan.maximumNumberOfTouches = 1
         videoView.addGestureRecognizer(videoPan)
+
+        // Loading indicator (shown until video track arrives)
+        loadingSpinner.color = .white; loadingSpinner.hidesWhenStopped = true
+        loadingSpinner.translatesAutoresizingMaskIntoConstraints = false; addSubview(loadingSpinner)
+        loadingLabel.text = "正在加载桌面…"; loadingLabel.font = .systemFont(ofSize: 14)
+        loadingLabel.textColor = UIColor(white: 0.6, alpha: 1); loadingLabel.textAlignment = .center
+        loadingLabel.translatesAutoresizingMaskIntoConstraints = false; addSubview(loadingLabel)
 
         // Long-press on video for scale menu
         let videoLongPress = UILongPressGestureRecognizer(target: self, action: #selector(showScaleMenu(_:)))
@@ -1291,6 +1429,14 @@ final class ScreenPanelView: UIView {
         mmCenterY = minimap.centerYAnchor.constraint(equalTo: centerYAnchor)
         mmTrailing?.isActive = true; mmBottom?.isActive = true
 
+        // Loading indicator
+        NSLayoutConstraint.activate([
+            loadingSpinner.centerXAnchor.constraint(equalTo: centerXAnchor),
+            loadingSpinner.centerYAnchor.constraint(equalTo: centerYAnchor),
+            loadingLabel.centerXAnchor.constraint(equalTo: centerXAnchor),
+            loadingLabel.topAnchor.constraint(equalTo: loadingSpinner.bottomAnchor, constant: 12),
+        ])
+
         // Minimap aspect ratio constraint (updated when window dimensions arrive)
         let ar = minimap.heightAnchor.constraint(equalTo: minimap.widthAnchor, multiplier: 110.0/150.0)
         ar.isActive = true; minimapAspect = ar
@@ -1313,6 +1459,8 @@ final class ScreenPanelView: UIView {
             curtainOffset = -curtainHeight
             applyCombinedTransform()
         }
+        // Show spinner if no video track yet
+        if videoTrack == nil { loadingSpinner.startAnimating(); loadingLabel.isHidden = false }
         let changes = { self.curtainOffset = 0; self.applyCombinedTransform() }
         if animated {
             UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.85, initialSpringVelocity: 0, options: [], animations: changes)
@@ -1431,6 +1579,9 @@ final class ScreenPanelView: UIView {
     private func sync() {
         guard let ss = screenState else { return }
         if let t = ss.videoTrack, t !== videoTrack { videoTrack?.remove(videoView); t.add(videoView); videoTrack = t }
+        // Loading indicator: shown until video track arrives
+        if ss.videoTrack != nil { loadingSpinner.stopAnimating(); loadingLabel.isHidden = true }
+        else if isOpen { loadingSpinner.startAnimating(); loadingLabel.isHidden = false }
         minimap.thumbnail = ss.thumbnail; minimap.winW = CGFloat(ss.metaWinW); minimap.winH = CGFloat(ss.metaWinH)
         minimap.vpW = CGFloat(ss.metaW); minimap.vpH = CGFloat(ss.metaH)
         if !minimap.isDragging { minimap.vpX = CGFloat(ss.metaX); minimap.vpY = CGFloat(ss.metaY) }
