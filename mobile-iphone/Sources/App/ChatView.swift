@@ -1159,14 +1159,18 @@ private struct MinimapView: UIViewRepresentable {
     }
 }
 
-private final class MinimapUIView: UIView {
+final class MinimapUIView: UIView {
     var thumbnail: UIImage?
     var winW: CGFloat = 0; var winH: CGFloat = 0
     var vpX: CGFloat = 0; var vpY: CGFloat = 0
     var vpW: CGFloat = 0; var vpH: CGFloat = 0
     var onViewportMove: ((Int, Int) -> Void)?
+    var isDragging: Bool { dragging }
 
     fileprivate var contentRect: CGRect = .zero
+    private var dragging = false
+    private var dragTouchOffsetX: CGFloat = 0
+    private var dragTouchOffsetY: CGFloat = 0
 
     override func layoutSubviews() {
         super.layoutSubviews()
@@ -1206,6 +1210,30 @@ private final class MinimapUIView: UIView {
         path.lineWidth = 2
         path.stroke()
     }
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard let pt = touches.first?.location(in: self),
+              winW > 0, vpW > 0, vpH > 0, !contentRect.isEmpty else { return }
+        let sx = contentRect.width / winW; let sy = contentRect.height / winH
+        let box = CGRect(x: contentRect.minX + vpX * sx, y: contentRect.minY + vpY * sy,
+                         width: vpW * sx, height: vpH * sy)
+        guard box.insetBy(dx: -15, dy: -15).contains(pt) else { return }
+        dragging = true
+        dragTouchOffsetX = pt.x - box.minX; dragTouchOffsetY = pt.y - box.minY
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard dragging, let pt = touches.first?.location(in: self) else { return }
+        let sx = contentRect.width / winW; let sy = contentRect.height / winH
+        let nx = max(0, min(winW - vpW, (pt.x - dragTouchOffsetX - contentRect.minX) / sx))
+        let ny = max(0, min(winH - vpH, (pt.y - dragTouchOffsetY - contentRect.minY) / sy))
+        vpX = nx; vpY = ny
+        onViewportMove?(Int(nx), Int(ny))
+        setNeedsDisplay()
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) { dragging = false }
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) { dragging = false }
 }
 
 /// 面板顶部圆角同心弧线，半径等于面板 cornerRadius，曲率与面板边缘完全一致。
