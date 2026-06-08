@@ -15,7 +15,9 @@ final class ChatViewController: UIViewController {
     private let inputBar = ChatInputBar()
     private let screenPanel = ScreenPanelView()
     private let screenShadow = UIView()
+    private var collapseZone: UIView?
     private var screenPanelTopConstraint: NSLayoutConstraint?
+    private var collapseZoneHeightConstraint: NSLayoutConstraint?
     // Keyboard-aware text input bar (matches Android text_input_card)
     private let textInputBar = UIView()
     private let textField = UITextField()
@@ -44,6 +46,7 @@ final class ChatViewController: UIViewController {
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = UIColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1)
+        navigationController?.interactivePopGestureRecognizer?.isEnabled = true
         setupHeader(); setupMessages(); setupInput(); setupScreenPanel()
         reloadMessages()
     }
@@ -211,16 +214,21 @@ final class ChatViewController: UIViewController {
             self.connections?.sendPointerScroll(session: s, dx: dx, dy: dy)
         }
         screenPanel.onOpen = { [weak self] in
-            self?.screenShadow.isHidden = false
-            self?.messageList.isHidden = true
+            guard let self else { return }
+            self.screenShadow.isHidden = false
+            self.collapseZone?.isHidden = false
+            self.messageList.isHidden = true
         }
         screenPanel.onClose = { [weak self] in
-            self?.messageList.isHidden = false
-            self?.screenShadow.isHidden = true
-            self?.closeScreenPanel()
+            guard let self else { return }
+            self.screenShadow.isHidden = true
+            self.collapseZone?.isHidden = true
+            self.messageList.isHidden = false
+            self.closeScreenPanel()
         }
-        // External shadow: added BEFORE screenPanel (behind in z-order)
+        // External shadow: purely visual, must not block touches
         screenShadow.isHidden = true
+        screenShadow.isUserInteractionEnabled = false
         screenShadow.translatesAutoresizingMaskIntoConstraints = false
         let sg = CAGradientLayer()
         sg.colors = [UIColor.black.withAlphaComponent(0.5).cgColor, UIColor.clear.cgColor]
@@ -249,11 +257,27 @@ final class ChatViewController: UIViewController {
             screenShadow.heightAnchor.constraint(equalToConstant: 8),
         ])
 
-        // Sync shadow transform with panel visual offset
+        // Collapse zone: topmost view, straddles panel bottom for swipe-up-to-close
+        let cz = UIView()
+        cz.backgroundColor = .clear
+        cz.isHidden = true; cz.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(cz)  // added LAST = topmost z-order (above shadow, above textInputBar)
+        NSLayoutConstraint.activate([
+            cz.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            cz.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            cz.topAnchor.constraint(equalTo: screenPanel.bottomAnchor, constant: -8),
+        ])
+        collapseZoneHeightConstraint = cz.heightAnchor.constraint(equalToConstant: 32)
+        collapseZoneHeightConstraint?.isActive = true
+        let collapsePan = UIPanGestureRecognizer(target: self, action: #selector(handleCollapseDrag(_:)))
+        cz.addGestureRecognizer(collapsePan)
+        collapseZone = cz
+
+        // Sync shadow + collapse zone transform with panel visual offset
         screenPanel.onTransformChanged = { [weak self] offset in
             guard let self else { return }
             self.screenShadow.transform = CGAffineTransform(translationX: 0, y: offset)
-            // Show shadow when panel is sufficiently revealed
+            self.collapseZone?.transform = CGAffineTransform(translationX: 0, y: offset)
             let revealed = self.screenPanel.curtainHeight + offset
             self.screenShadow.isHidden = revealed < 8
         }
@@ -280,6 +304,7 @@ final class ChatViewController: UIViewController {
             let visible = self?.debugHotZones ?? false
             self?.inputBar.setHotZonesVisible(visible)
             self?.screenPanel.setHotZonesVisible(visible)
+            self?.collapseZone?.backgroundColor = visible ? UIColor(red: 1, green: 0, blue: 0, alpha: 0.5) : .clear
         })
         a.addAction(UIAlertAction(title: "文本/方向交互切换", style: .default) { [weak self] _ in
             self?.dPadMode.toggle()
@@ -292,6 +317,11 @@ final class ChatViewController: UIViewController {
         screenPanel.screenState = screenState
         connections?.setScreenListener(connectionId: connectionId, listener: screenState)
         screenPanel.open()
+        // If keyboard is showing in text mode, push panel up to match
+        if isTextMode, kbHeight > 0 {
+            let targetBottom = view.bounds.height - kbHeight - 60
+            screenPanel.keyboardLift = targetBottom - screenPanel.frame.maxY
+        }
         setNeedsStatusBarAppearanceUpdate()
         if let s = session {
             screenPanel.layoutIfNeeded()
@@ -306,6 +336,21 @@ final class ChatViewController: UIViewController {
         guard let s = session else { return }
         connections?.stopScreen(session: s)
         setNeedsStatusBarAppearanceUpdate()
+    }
+
+    @objc private func handleCollapseDrag(_ gesture: UIPanGestureRecognizer) {
+        guard screenPanel.isOpen else { return }
+        let translation = gesture.translation(in: view)
+        switch gesture.state {
+        case .changed:
+            if translation.y < 0 { screenPanel.curtainOffset = translation.y; screenPanel.applyCombinedTransform() }
+        case .ended, .cancelled:
+            if translation.y < -50 { screenPanel.close() }
+            else if screenPanel.curtainOffset < 0 {
+                UIView.animate(withDuration: 0.25) { self.screenPanel.curtainOffset = 0; self.screenPanel.applyCombinedTransform() }
+            }
+        default: break
+        }
     }
 
     @objc private func handleHeaderSwipe(_ gesture: UIPanGestureRecognizer) {
@@ -343,8 +388,13 @@ final class ChatViewController: UIViewController {
         UIImpactFeedbackGenerator(style: .light).impactOccurred()
         inputBar.animateVoiceOut()
 
-        // Bring textInputBar above screenPanel (added later in view hierarchy)
+        // Collapse zone: 8pt inside + 8pt outside (covers shadow area only)
+        collapseZoneHeightConstraint?.constant = 16
+
+        // Bring textInputBar + shadow above screenPanel, collapse zone on very top
         view.bringSubviewToFront(textInputBar)
+        view.bringSubviewToFront(screenShadow)
+        if let cz = collapseZone { view.bringSubviewToFront(cz) }
 
         // Switch messageList bottom to textInputBar.top (keyboard-aware)
         messageListToInputBar?.isActive = false
@@ -368,6 +418,7 @@ final class ChatViewController: UIViewController {
         textField.resignFirstResponder()
         inputBar.animateVoiceIn()
         screenPanel.keyboardLift = 0
+        collapseZoneHeightConstraint?.constant = 32
 
         // Restore layout: messageList back to inputBar.top
         messageListToTextBar?.isActive = false
@@ -392,7 +443,9 @@ final class ChatViewController: UIViewController {
 
     @objc private func handleTextBarSwipe(_ gesture: UIPanGestureRecognizer) {
         guard gesture.state == .ended else { return }
-        if gesture.translation(in: textInputBar).y > 28 { hideTextInput() }
+        let t = gesture.translation(in: textInputBar)
+        if t.y < -28, screenPanel.isOpen { screenPanel.close() }   // swipe up → close curtain
+        else if t.y > 28 { hideTextInput() }                        // swipe down → voice mode
     }
 
     // MARK: - Keyboard
@@ -406,7 +459,7 @@ final class ChatViewController: UIViewController {
             textInputBottomConstraint?.constant = -kbHeight
             if screenPanel.isOpen {
                 let targetBottom = view.bounds.height - kbHeight - 60
-                let lift = targetBottom - inputBar.frame.minY
+                let lift = targetBottom - screenPanel.frame.maxY
                 UIView.animate(withDuration: duration) {
                     self.screenPanel.keyboardLift = lift
                 }
@@ -624,10 +677,10 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handleMicDrag(_:)))
         micBtn.addGestureRecognizer(pan)
 
-        // Pull-up gesture on composer panel (delegate filters out button touches)
+        // Pull-up gesture on entire input bar (covers hint + composer, delegate filters button areas)
         let composerPull = UIPanGestureRecognizer(target: self, action: #selector(handleComposerPull(_:)))
         composerPull.delegate = self
-        composerPanel.addGestureRecognizer(composerPull)
+        addGestureRecognizer(composerPull)
 
         // Text mode switching delegated to ChatViewController via onTextModeRequest
 
@@ -955,7 +1008,7 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
             pullTriggered = false
         case .changed:
             let pulled = max(0, -translation.y)
-            applyComposerPull(min(1, pulled / pullMax))
+            if pulled > 0 { applyComposerPull(min(1, pulled / pullMax)) }
             if pulled > pullMax * 0.55, !pullTriggered {
                 pullTriggered = true
                 applyComposerPull(1)
@@ -964,11 +1017,14 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
             }
         case .ended, .cancelled:
             if !pullTriggered {
-                let pulled = max(0, -translation.y)
-                if pulled < 12 {
+                if translation.y > 8 {
+                    // Dragged down: ignore
+                } else if translation.y > -8 {
+                    // Minimal movement: tap to open
                     animateVoiceOut()
-                    onTextModeRequest?() // tap on empty area
+                    onTextModeRequest?()
                 } else {
+                    // Pulled up but not enough: snap back
                     snapComposerBack()
                 }
             }
@@ -1032,82 +1088,52 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
     }
 
     private func createHotZoneOverlays() {
-        let colors: [UIColor] = [
-            UIColor(red: 1, green: 0, blue: 0, alpha: 0.25),
-            UIColor(red: 0, green: 1, blue: 0, alpha: 0.25),
-            UIColor(red: 0, green: 0, blue: 1, alpha: 0.25),
-            UIColor(red: 1, green: 1, blue: 0, alpha: 0.25),
-        ]
+        let pullColor = UIColor(red: 0, green: 1, blue: 0, alpha: 0.25)    // green: pull-up
+        let micColor  = UIColor(red: 1, green: 0, blue: 0, alpha: 0.25)    // red: mic cursor
+        let btnColor  = UIColor(red: 1, green: 1, blue: 0, alpha: 0.25)    // yellow: buttons
         func makeZone(_ color: UIColor, _ parent: UIView) -> UIView {
             let v = UIView(); v.backgroundColor = color; v.layer.cornerRadius = 4; v.isUserInteractionEnabled = false
             v.translatesAutoresizingMaskIntoConstraints = false; parent.addSubview(v); return v
         }
 
-        // 1. Mic drag activation zone (center area around mic)
-        let micZone = makeZone(colors[0], composerPanel)
+        // Overflow margin = gap between hint bottom and composer panel top (24pt)
+        let m: CGFloat = 24
+        let excl: CGFloat = 70  // mic exclusion half-width
+
+        // Pull-up zone: composerPanel ± margin on all 4 sides, split by mic exclusion
+        let leftPull = makeZone(pullColor, self)
+        NSLayoutConstraint.activate([
+            leftPull.topAnchor.constraint(equalTo: composerPanel.topAnchor, constant: -m),
+            leftPull.bottomAnchor.constraint(equalTo: composerPanel.bottomAnchor, constant: m),
+            leftPull.leadingAnchor.constraint(equalTo: composerPanel.leadingAnchor, constant: -m),
+            leftPull.trailingAnchor.constraint(equalTo: micBtn.centerXAnchor, constant: -excl),
+        ])
+        let rightPull = makeZone(pullColor, self)
+        NSLayoutConstraint.activate([
+            rightPull.topAnchor.constraint(equalTo: composerPanel.topAnchor, constant: -m),
+            rightPull.bottomAnchor.constraint(equalTo: composerPanel.bottomAnchor, constant: m),
+            rightPull.leadingAnchor.constraint(equalTo: micBtn.centerXAnchor, constant: excl),
+            rightPull.trailingAnchor.constraint(equalTo: composerPanel.trailingAnchor, constant: m),
+        ])
+
+        // Mic exclusion zone (red): full panel height, ±70pt from mic center
+        let micZone = makeZone(micColor, composerPanel)
         NSLayoutConstraint.activate([
             micZone.centerXAnchor.constraint(equalTo: micBtn.centerXAnchor),
             micZone.centerYAnchor.constraint(equalTo: micBtn.centerYAnchor),
-            micZone.widthAnchor.constraint(equalToConstant: 120),
-            micZone.heightAnchor.constraint(equalToConstant: 120),
+            micZone.widthAnchor.constraint(equalToConstant: excl * 2),
+            micZone.heightAnchor.constraint(equalTo: composerPanel.heightAnchor),
         ])
 
-        // 2. Direction pads around mic (up/down/left/right)
-        let padSize: CGFloat = 44
-        let dirUpZone = makeZone(colors[1], composerPanel)
-        NSLayoutConstraint.activate([
-            dirUpZone.centerXAnchor.constraint(equalTo: micBtn.centerXAnchor),
-            dirUpZone.bottomAnchor.constraint(equalTo: micBtn.topAnchor, constant: -4),
-            dirUpZone.widthAnchor.constraint(equalToConstant: padSize),
-            dirUpZone.heightAnchor.constraint(equalToConstant: padSize),
-        ])
-        let dirDownZone = makeZone(colors[2], composerPanel)
-        NSLayoutConstraint.activate([
-            dirDownZone.centerXAnchor.constraint(equalTo: micBtn.centerXAnchor),
-            dirDownZone.topAnchor.constraint(equalTo: micBtn.bottomAnchor, constant: 4),
-            dirDownZone.widthAnchor.constraint(equalToConstant: padSize),
-            dirDownZone.heightAnchor.constraint(equalToConstant: padSize),
-        ])
-        let dirLeftZone = makeZone(colors[3], composerPanel)
-        NSLayoutConstraint.activate([
-            dirLeftZone.centerYAnchor.constraint(equalTo: micBtn.centerYAnchor),
-            dirLeftZone.rightAnchor.constraint(equalTo: micBtn.centerXAnchor, constant: -14),
-            dirLeftZone.widthAnchor.constraint(equalToConstant: padSize),
-            dirLeftZone.heightAnchor.constraint(equalToConstant: padSize),
-        ])
-        let dirRightZone = makeZone(colors[0], composerPanel)
-        NSLayoutConstraint.activate([
-            dirRightZone.centerYAnchor.constraint(equalTo: micBtn.centerYAnchor),
-            dirRightZone.leftAnchor.constraint(equalTo: micBtn.centerXAnchor, constant: 14),
-            dirRightZone.widthAnchor.constraint(equalToConstant: padSize),
-            dirRightZone.heightAnchor.constraint(equalToConstant: padSize),
-        ])
-
-        // 3. Left/right edge pull-up zones (20pt strips on composerPanel edges)
-        let leftPull = makeZone(colors[1], composerPanel)
-        NSLayoutConstraint.activate([
-            leftPull.topAnchor.constraint(equalTo: composerPanel.topAnchor),
-            leftPull.bottomAnchor.constraint(equalTo: composerPanel.bottomAnchor),
-            leftPull.leadingAnchor.constraint(equalTo: composerPanel.leadingAnchor),
-            leftPull.widthAnchor.constraint(equalToConstant: 20),
-        ])
-        let rightPull = makeZone(colors[2], composerPanel)
-        NSLayoutConstraint.activate([
-            rightPull.topAnchor.constraint(equalTo: composerPanel.topAnchor),
-            rightPull.bottomAnchor.constraint(equalTo: composerPanel.bottomAnchor),
-            rightPull.trailingAnchor.constraint(equalTo: composerPanel.trailingAnchor),
-            rightPull.widthAnchor.constraint(equalToConstant: 20),
-        ])
-
-        // 4. Delete & return button zones
-        let deleteZone = makeZone(colors[3], composerPanel)
+        // Delete & return button zones
+        let deleteZone = makeZone(btnColor, composerPanel)
         NSLayoutConstraint.activate([
             deleteZone.centerXAnchor.constraint(equalTo: deleteBtn.centerXAnchor),
             deleteZone.centerYAnchor.constraint(equalTo: deleteBtn.centerYAnchor),
             deleteZone.widthAnchor.constraint(equalToConstant: 70),
             deleteZone.heightAnchor.constraint(equalToConstant: 70),
         ])
-        let returnZone = makeZone(colors[0], composerPanel)
+        let returnZone = makeZone(btnColor, composerPanel)
         NSLayoutConstraint.activate([
             returnZone.centerXAnchor.constraint(equalTo: returnBtn.centerXAnchor),
             returnZone.centerYAnchor.constraint(equalTo: returnBtn.centerYAnchor),
@@ -1115,15 +1141,17 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
             returnZone.heightAnchor.constraint(equalToConstant: 70),
         ])
 
-        hotZoneOverlays = [micZone, dirUpZone, dirDownZone, dirLeftZone, dirRightZone,
-                           leftPull, rightPull, deleteZone, returnZone]
+        hotZoneOverlays = [leftPull, rightPull, micZone, deleteZone, returnZone]
     }
 
     // MARK: - UIGestureRecognizerDelegate
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        let loc = touch.location(in: composerPanel)
-        let blockedFrames = [micBtn, deleteBtn, returnBtn].map { $0.frame.insetBy(dx: -8, dy: -8) }
+        let loc = touch.location(in: self)
+        let blockedFrames = [micBtn, deleteBtn, returnBtn].map { $0.convert($0.bounds, to: self).insetBy(dx: -8, dy: -8) }
+        // Also block the mic cursor zone (±70pt from mic center) to avoid conflicts
+        let micCenter = micBtn.convert(CGPoint(x: micBtn.bounds.midX, y: micBtn.bounds.midY), to: self)
+        if abs(loc.x - micCenter.x) < 70 { return false }
         for f in blockedFrames where f.contains(loc) { return false }
         return true
     }
@@ -1149,7 +1177,6 @@ final class ScreenPanelView: UIView {
     private let videoView = RTCMTLVideoView(); private let minimap = MinimapUIView()
     private var videoTrack: RTCVideoTrack?
     private let grabBar = UIView(); private let grabPill = UIView()
-    private let collapseZone = UIView()
     private var panelHeight: CGFloat = 0
     private var baseOffset: CGFloat = 0
     private(set) var isOpen = false
@@ -1161,10 +1188,10 @@ final class ScreenPanelView: UIView {
     var visualOffset: CGFloat { curtainOffset + keyboardLift }
     private var displayScale: CGFloat = 1.0
 
-    private var curtainOffset: CGFloat = 0
+    var curtainOffset: CGFloat = 0
     var keyboardLift: CGFloat = 0 { didSet { applyCombinedTransform() } }
 
-    private func applyCombinedTransform() {
+    func applyCombinedTransform() {
         transform = CGAffineTransform(translationX: 0, y: visualOffset)
         onTransformChanged?(visualOffset)
     }
@@ -1215,13 +1242,6 @@ final class ScreenPanelView: UIView {
         minimap.onViewportMove = { [weak self] x, y in self?.onViewportMove?(x, y) }
         minimap.onLongPress = { [weak self] in self?.showMinimapPositionMenu() }
 
-        // Collapse zone (matches Android: swipe up to close)
-        collapseZone.backgroundColor = UIColor(red: 1, green: 0, blue: 0, alpha: 0.5)
-        collapseZone.isHidden = true; collapseZone.isUserInteractionEnabled = false
-        collapseZone.translatesAutoresizingMaskIntoConstraints = false; addSubview(collapseZone)
-        let collapsePan = UIPanGestureRecognizer(target: self, action: #selector(handleCollapseDrag(_:)))
-        collapseZone.addGestureRecognizer(collapsePan)
-
         // Video-area drag to pan viewport (single-finger only)
         let videoPan = UIPanGestureRecognizer(target: self, action: #selector(handleVideoPan(_:)))
         videoPan.maximumNumberOfTouches = 1
@@ -1262,10 +1282,6 @@ final class ScreenPanelView: UIView {
 
             minimap.widthAnchor.constraint(equalToConstant: 150),
 
-            collapseZone.leadingAnchor.constraint(equalTo: leadingAnchor),
-            collapseZone.trailingAnchor.constraint(equalTo: trailingAnchor),
-            collapseZone.bottomAnchor.constraint(equalTo: bottomAnchor),
-            collapseZone.heightAnchor.constraint(equalToConstant: 20),
         ])
         // Minimap position constraints (default: bottom-right)
         mmLeading = minimap.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16)
@@ -1301,7 +1317,6 @@ final class ScreenPanelView: UIView {
         if animated {
             UIView.animate(withDuration: 0.35, delay: 0, usingSpringWithDamping: 0.85, initialSpringVelocity: 0, options: [], animations: changes)
         } else { changes() }
-        collapseZone.isHidden = !debugHotZones
         onOpen?()
     }
 
@@ -1310,13 +1325,13 @@ final class ScreenPanelView: UIView {
         isOpen = false
         let h = max(panelHeight, 1)
         let changes = { self.curtainOffset = -h; self.applyCombinedTransform() }
+        let finish = {
+            self.isHidden = true; self.curtainOffset = 0; self.keyboardLift = 0
+            self.applyCombinedTransform(); self.onClose?()
+        }
         if animated {
-            UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseIn, animations: changes) { _ in
-                self.isHidden = true; self.curtainOffset = 0; self.keyboardLift = 0; self.applyCombinedTransform()
-            }
-        } else { changes(); isHidden = true; curtainOffset = 0; keyboardLift = 0; applyCombinedTransform() }
-        collapseZone.isHidden = true
-        onClose?()
+            UIView.animate(withDuration: 0.3, delay: 0, options: .curveEaseIn, animations: changes) { _ in finish() }
+        } else { changes(); finish() }
     }
 
     // MARK: - Grab bar drag (bidirectional)
@@ -1332,27 +1347,6 @@ final class ScreenPanelView: UIView {
         case .ended, .cancelled:
             let velocity = gesture.velocity(in: superview).y
             settle(velocityY: velocity)
-        default: break
-        }
-    }
-
-    // MARK: - Collapse zone drag (swipe up to close)
-
-    @objc private func handleCollapseDrag(_ gesture: UIPanGestureRecognizer) {
-        guard isOpen else { return }
-        let translation = gesture.translation(in: superview)
-        switch gesture.state {
-        case .changed:
-            if translation.y < 0 {
-                curtainOffset = translation.y
-                applyCombinedTransform()
-            }
-        case .ended, .cancelled:
-            if translation.y < -50 {
-                close()
-            } else if curtainOffset < 0 {
-                UIView.animate(withDuration: 0.25) { self.curtainOffset = 0; self.applyCombinedTransform() }
-            }
         default: break
         }
     }
@@ -1525,8 +1519,5 @@ final class ScreenPanelView: UIView {
         minimap.setNeedsDisplay()
     }
 
-    func setHotZonesVisible(_ visible: Bool) {
-        debugHotZones = visible
-        collapseZone.isHidden = !visible || !isOpen
-    }
+    func setHotZonesVisible(_ visible: Bool) { debugHotZones = visible }
 }
