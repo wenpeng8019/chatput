@@ -46,7 +46,7 @@
 				android:layout_width="match_parent"
 				android:layout_height="wrap_content"
 				android:layout_marginTop="10dp"
-				android:text="把桌面输入做得更自然"
+				android:text="Agent 时代该有的输入法"
 				android:textColor="@color/chatput_text_primary"
 				android:textSize="24sp"
 				android:textStyle="bold" />

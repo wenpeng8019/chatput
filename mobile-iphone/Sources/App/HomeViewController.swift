@@ -27,7 +27,7 @@ final class HomeViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1)
+        view.backgroundColor = Theme.bg
         setupViews()
         updateUI()
         connections.$sessions.receive(on: DispatchQueue.main).sink { [weak self] sessions in
@@ -67,7 +67,7 @@ final class HomeViewController: UIViewController {
         // Recent connections (bottom fixed area)
         recentTitle.text = "历史连接"
         recentTitle.font = .systemFont(ofSize: 13)
-        recentTitle.textColor = UIColor(white: 0.6, alpha: 1)
+        recentTitle.textColor = Theme.textTertiary
         recentTitle.translatesAutoresizingMaskIntoConstraints = false
         view.addSubview(recentTitle)
 
@@ -76,13 +76,13 @@ final class HomeViewController: UIViewController {
         view.addSubview(recentStack)
 
         // Hint (capsule, fixed at bottom)
-        hintContainer.backgroundColor = UIColor(white: 0.2, alpha: 1)
+        hintContainer.backgroundColor = Theme.surfaceAlt
         hintContainer.clipsToBounds = true
         view.addSubview(hintContainer)
         hintContainer.translatesAutoresizingMaskIntoConstraints = false
 
         hintLabel.font = .systemFont(ofSize: 15)
-        hintLabel.textColor = UIColor(white: 0.6, alpha: 1)
+        hintLabel.textColor = Theme.textSecondary
         hintLabel.textAlignment = .center
         hintContainer.addSubview(hintLabel)
         hintLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -90,9 +90,12 @@ final class HomeViewController: UIViewController {
         // Scan button (fixed at bottom)
         scanButton.setImage(UIImage(systemName: "qrcode.viewfinder",
                                      withConfiguration: UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold)), for: .normal)
-        scanButton.tintColor = .white
-        scanButton.backgroundColor = UIColor(red: 1, green: 0.58, blue: 0.22, alpha: 1)
+        scanButton.tintColor = Theme.onAccent
+        scanButton.backgroundColor = Theme.accent
         scanButton.layer.cornerRadius = 29
+        scanButton.layer.shadowColor = UIColor.black.cgColor
+        scanButton.layer.shadowOffset = CGSize(width: 0, height: 4)
+        scanButton.layer.shadowRadius = 8; scanButton.layer.shadowOpacity = 0.2
         scanButton.addTarget(self, action: #selector(openScanner), for: .touchUpInside)
         view.addSubview(scanButton)
         scanButton.translatesAutoresizingMaskIntoConstraints = false
@@ -169,20 +172,21 @@ final class HomeHeaderView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = UIColor(white: 0.16, alpha: 1)
+        backgroundColor = Theme.surface
         layer.cornerRadius = 18
+        layer.borderWidth = 1; layer.borderColor = Theme.line.cgColor
 
         titleLabel.text = "ChatPUT"
         titleLabel.font = .systemFont(ofSize: 12, weight: .bold)
-        titleLabel.textColor = UIColor(red: 1, green: 0.58, blue: 0.22, alpha: 1)
+        titleLabel.textColor = Theme.accent
 
-        subtitleLabel.text = "把桌面输入做得更自然"
+        subtitleLabel.text = "Agent 时代该有的输入法"
         subtitleLabel.font = .systemFont(ofSize: 24, weight: .bold)
-        subtitleLabel.textColor = .white
+        subtitleLabel.textColor = Theme.textPrimary
 
         descLabel.text = "连接后，当前聚焦窗口会自动成为会话。"
         descLabel.font = .systemFont(ofSize: 14)
-        descLabel.textColor = UIColor(white: 0.6, alpha: 1)
+        descLabel.textColor = Theme.textSecondary
 
         statusButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .bold)
         statusButton.layer.cornerRadius = 15
@@ -197,15 +201,15 @@ final class HomeHeaderView: UIView {
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -18),
 
-            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 4),
+            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 10),
             subtitleLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             subtitleLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
 
-            descLabel.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 6),
+            descLabel.topAnchor.constraint(equalTo: subtitleLabel.bottomAnchor, constant: 8),
             descLabel.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             descLabel.trailingAnchor.constraint(equalTo: titleLabel.trailingAnchor),
 
-            statusButton.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 12),
+            statusButton.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 16),
             statusButton.leadingAnchor.constraint(equalTo: titleLabel.leadingAnchor),
             statusButton.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -18),
         ])
@@ -215,11 +219,11 @@ final class HomeHeaderView: UIView {
     func update(status: String, connected: Bool) {
         statusButton.setTitle(status, for: .normal)
         if connected {
-            statusButton.setTitleColor(UIColor(red: 0.2, green: 0.8, blue: 0.4, alpha: 1), for: .normal)
-            statusButton.backgroundColor = UIColor(red: 0.2, green: 0.8, blue: 0.4, alpha: 0.15)
+            statusButton.setTitleColor(Theme.statusConnectedText, for: .normal)
+            statusButton.backgroundColor = Theme.statusConnectedBg
         } else {
-            statusButton.setTitleColor(UIColor(white: 0.6, alpha: 1), for: .normal)
-            statusButton.backgroundColor = UIColor(white: 0.2, alpha: 1)
+            statusButton.setTitleColor(Theme.statusIdleText, for: .normal)
+            statusButton.backgroundColor = Theme.statusIdleBg
         }
     }
 

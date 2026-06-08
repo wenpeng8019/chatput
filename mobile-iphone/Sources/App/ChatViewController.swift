@@ -46,7 +46,7 @@ final class ChatViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1)
+        view.backgroundColor = Theme.bg
         navigationController?.interactivePopGestureRecognizer?.isEnabled = true
         setupHeader(); setupMessages(); setupInput(); setupScreenPanel()
         reloadMessages()
@@ -134,10 +134,10 @@ final class ChatViewController: UIViewController {
         ])
 
         // Text input bar (keyboard-aware, matches Android text_input_card)
-        textInputBar.backgroundColor = UIColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1)
+        textInputBar.backgroundColor = Theme.bg
         textInputBar.isHidden = true
         // Top separator line (matches Android 1dp border)
-        let sep = UIView(); sep.backgroundColor = UIColor(white: 0.25, alpha: 1)
+        let sep = UIView(); sep.backgroundColor = Theme.line
         sep.translatesAutoresizingMaskIntoConstraints = false; textInputBar.addSubview(sep)
         NSLayoutConstraint.activate([
             sep.topAnchor.constraint(equalTo: textInputBar.topAnchor),
@@ -147,20 +147,20 @@ final class ChatViewController: UIViewController {
         ])
 
         textField.placeholder = "输入文字…"; textField.font = .systemFont(ofSize: 16)
-        textField.textColor = .white; textField.backgroundColor = UIColor(white: 0.2, alpha: 1)
+        textField.textColor = Theme.textPrimary; textField.backgroundColor = Theme.surfaceAlt
         textField.layer.cornerRadius = 14
         textField.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 16, height: 0))
         textField.leftViewMode = .always; textField.returnKeyType = .send
         textField.delegate = self
 
         textSendBtn.setImage(UIImage(systemName: "paperplane.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)), for: .normal)
-        textSendBtn.tintColor = .white; textSendBtn.backgroundColor = UIColor(red: 1, green: 0.58, blue: 0.22, alpha: 1)
+        textSendBtn.tintColor = .white; textSendBtn.backgroundColor = Theme.accent
         textSendBtn.layer.cornerRadius = 20
         textSendBtn.addTarget(self, action: #selector(sendTextTapped), for: .touchUpInside)
 
         textMicBtn.setImage(UIImage(systemName: "mic.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)), for: .normal)
-        textMicBtn.tintColor = UIColor(red: 1, green: 0.58, blue: 0.22, alpha: 1)
-        textMicBtn.backgroundColor = UIColor(white: 0.2, alpha: 1); textMicBtn.layer.cornerRadius = 20
+        textMicBtn.tintColor = Theme.accent
+        textMicBtn.backgroundColor = Theme.surfaceAlt; textMicBtn.layer.cornerRadius = 20
         textMicBtn.addTarget(self, action: #selector(hideTextInput), for: .touchUpInside)
 
         let textSwipe = UIPanGestureRecognizer(target: self, action: #selector(handleTextBarSwipe(_:)))
@@ -540,7 +540,7 @@ final class MessageCell: UITableViewCell {
         backgroundColor = .clear; selectionStyle = .none
         contentView.transform = CGAffineTransform(scaleX: 1, y: -1)
 
-        label.font = .systemFont(ofSize: 16); label.textColor = .white; label.numberOfLines = 0
+        label.font = .systemFont(ofSize: 16); label.numberOfLines = 0
         bubble.layer.cornerRadius = 20
         bubble.translatesAutoresizingMaskIntoConstraints = false
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -559,13 +559,15 @@ final class MessageCell: UITableViewCell {
     func configure(_ msg: ChatMessage) {
         label.text = msg.text
         if msg.fromMe {
-            bubble.backgroundColor = UIColor(red: 0.18, green: 0.35, blue: 0.87, alpha: 1) // messageBubble accent
+            label.textColor = Theme.onAccent
+            bubble.backgroundColor = Theme.messageBubbleSelf
             bubble.layer.maskedCorners = [.layerMinXMinYCorner, .layerMinXMaxYCorner, .layerMaxXMinYCorner]
             bubble.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -18).isActive = true
             bubble.leadingAnchor.constraint(greaterThanOrEqualTo: contentView.leadingAnchor, constant: 60).isActive = true
             bubble.widthAnchor.constraint(lessThanOrEqualToConstant: 280).isActive = true
         } else {
-            bubble.backgroundColor = UIColor(white: 0.16, alpha: 1) // surface
+            label.textColor = Theme.textPrimary
+            bubble.backgroundColor = Theme.surfaceAlt
             bubble.layer.maskedCorners = [.layerMinXMinYCorner, .layerMaxXMinYCorner, .layerMaxXMaxYCorner]
             bubble.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 18).isActive = true
             bubble.trailingAnchor.constraint(lessThanOrEqualTo: contentView.trailingAnchor, constant: -60).isActive = true
@@ -584,14 +586,15 @@ final class ChatHeaderBar: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = UIColor(white: 0.16, alpha: 1); layer.cornerRadius = 18
+        backgroundColor = Theme.surface; layer.cornerRadius = 22
+        layer.borderWidth = 1; layer.borderColor = Theme.line.cgColor
         let back = UIButton(type: .system)
         back.setImage(UIImage(systemName: "chevron.left", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)), for: .normal)
-        back.tintColor = UIColor(white: 0.7, alpha: 1); back.backgroundColor = UIColor(white: 0.2, alpha: 1); back.layer.cornerRadius = 20
+        back.tintColor = Theme.textSecondary; back.backgroundColor = Theme.surfaceAlt; back.layer.cornerRadius = 20
         back.addTarget(self, action: #selector(tapBack), for: .touchUpInside)
-        let app = UILabel(); app.font = .systemFont(ofSize: 22, weight: .bold); app.textColor = .white; app.tag = 1
+        let app = UILabel(); app.font = .systemFont(ofSize: 22, weight: .regular); app.textColor = Theme.textPrimary; app.tag = 1
         app.isUserInteractionEnabled = true
-        let title = UILabel(); title.font = .systemFont(ofSize: 13); title.textColor = UIColor(white: 0.6, alpha: 1); title.tag = 2
+        let title = UILabel(); title.font = .systemFont(ofSize: 13); title.textColor = Theme.textSecondary; title.tag = 2
         title.isUserInteractionEnabled = true
 
         // 5-tap engineering menu on title area
@@ -602,17 +605,17 @@ final class ChatHeaderBar: UIView {
 
         let menu = UIButton(type: .system)
         menu.setImage(UIImage(systemName: "ellipsis", withConfiguration: UIImage.SymbolConfiguration(pointSize: 21, weight: .bold)), for: .normal)
-        menu.tintColor = UIColor(white: 0.7, alpha: 1); menu.backgroundColor = UIColor(white: 0.2, alpha: 1); menu.layer.cornerRadius = 20
+        menu.tintColor = Theme.textSecondary; menu.backgroundColor = Theme.surfaceAlt; menu.layer.cornerRadius = 20
         menu.addTarget(self, action: #selector(tapMenu), for: .touchUpInside)
         [back, app, title, menu].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0) }
         NSLayoutConstraint.activate([
-            back.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12), back.centerYAnchor.constraint(equalTo: centerYAnchor),
+            back.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20), back.centerYAnchor.constraint(equalTo: centerYAnchor),
             back.widthAnchor.constraint(equalToConstant: 40), back.heightAnchor.constraint(equalToConstant: 40),
-            app.leadingAnchor.constraint(equalTo: back.trailingAnchor, constant: 12), app.topAnchor.constraint(equalTo: topAnchor, constant: 12),
+            app.leadingAnchor.constraint(equalTo: back.trailingAnchor, constant: 12), app.topAnchor.constraint(equalTo: topAnchor, constant: 18),
             app.trailingAnchor.constraint(lessThanOrEqualTo: menu.leadingAnchor, constant: -12),
             title.leadingAnchor.constraint(equalTo: app.leadingAnchor), title.topAnchor.constraint(equalTo: app.bottomAnchor, constant: 6),
-            title.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
-            menu.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12), menu.centerYAnchor.constraint(equalTo: centerYAnchor),
+            title.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+            menu.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20), menu.centerYAnchor.constraint(equalTo: centerYAnchor),
             menu.widthAnchor.constraint(equalToConstant: 40), menu.heightAnchor.constraint(equalToConstant: 40),
         ])
     }
@@ -680,22 +683,22 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = UIColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1)
+        backgroundColor = Theme.bg
 
         // Hint
         hintLabel.text = "按住说话"; hintLabel.font = .systemFont(ofSize: 13)
-        hintLabel.textColor = UIColor(white: 0.5, alpha: 1); hintLabel.textAlignment = .center
+        hintLabel.textColor = Theme.textTertiary; hintLabel.textAlignment = .center
 
         // Composer panel (matches SwiftUI .panel(cornerRadius: 34))
-        composerPanel.backgroundColor = UIColor(white: 0.16, alpha: 1)
+        composerPanel.backgroundColor = Theme.surface
         composerPanel.layer.cornerRadius = 34
         composerPanel.layer.borderWidth = 1
-        composerPanel.layer.borderColor = UIColor(white: 0.22, alpha: 1).cgColor
+        composerPanel.layer.borderColor = Theme.line.cgColor
 
         // Delete button (56x56, surfaceAlt bg)
         deleteBtn.setImage(UIImage(systemName: "delete.left", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold)), for: .normal)
-        deleteBtn.tintColor = UIColor(white: 0.7, alpha: 1)
-        deleteBtn.backgroundColor = UIColor(white: 0.2, alpha: 1)
+        deleteBtn.tintColor = Theme.textSecondary
+        deleteBtn.backgroundColor = Theme.surfaceAlt
         deleteBtn.layer.cornerRadius = 28
         deleteBtn.addTarget(self, action: #selector(deleteTouchDown), for: .touchDown)
         deleteBtn.addTarget(self, action: #selector(deleteTouchUp), for: .touchUpInside)
@@ -705,7 +708,7 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
         // Progress ring (78pt around button)
         for (ring, btn) in [(deleteRing, deleteBtn), (returnRing, returnBtn)] {
             ring.path = UIBezierPath(arcCenter: .zero, radius: 39, startAngle: -.pi/2, endAngle: .pi*1.5, clockwise: true).cgPath
-            ring.strokeColor = UIColor(red: 1, green: 0.58, blue: 0.22, alpha: 1).cgColor
+            ring.strokeColor = Theme.accent.cgColor
             ring.fillColor = UIColor.clear.cgColor
             ring.lineWidth = 3.9; ring.strokeEnd = 0; ring.lineCap = .round
             ring.position = CGPoint(x: 28, y: 28) // button center in button's own frame
@@ -715,7 +718,7 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
         // Mic button (78x78, accent orange)
         micBtn.setImage(UIImage(systemName: "mic.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 30, weight: .semibold)), for: .normal)
         micBtn.tintColor = .white
-        micBtn.backgroundColor = UIColor(red: 1, green: 0.58, blue: 0.22, alpha: 1)
+        micBtn.backgroundColor = Theme.accent
         micBtn.layer.cornerRadius = 39
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handleMicDrag(_:)))
         micBtn.addGestureRecognizer(pan)
@@ -741,8 +744,8 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
 
         // Return button (56x56, surfaceAlt bg)
         returnBtn.setImage(UIImage(systemName: "return", withConfiguration: UIImage.SymbolConfiguration(pointSize: 22, weight: .semibold)), for: .normal)
-        returnBtn.tintColor = UIColor(white: 0.7, alpha: 1)
-        returnBtn.backgroundColor = UIColor(white: 0.2, alpha: 1)
+        returnBtn.tintColor = Theme.textSecondary
+        returnBtn.backgroundColor = Theme.surfaceAlt
         returnBtn.layer.cornerRadius = 28
         returnBtn.addTarget(self, action: #selector(returnTouchDown), for: .touchDown)
         returnBtn.addTarget(self, action: #selector(returnTouchUp), for: .touchUpInside)
@@ -752,7 +755,7 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
         // Grab handle: 3-dot triangles at top corners (visual hint for pull-up)
         let grabDots = (0..<6).map { _ -> UIView in
             let v = UIView()
-            v.backgroundColor = UIColor(white: 1, alpha: 0.3)
+            v.backgroundColor = Theme.textTertiary
             v.layer.cornerRadius = 1.5; v.translatesAutoresizingMaskIntoConstraints = false
             composerPanel.addSubview(v); return v
         }
@@ -761,7 +764,7 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
         self.grabDots = grabDots
 
         // Direction hints (chevrons + dots around mic)
-        let tint = UIColor(red: 1, green: 0.58, blue: 0.22, alpha: 0.34)
+        let tint = Theme.accent.withAlphaComponent(0.34)
         let chevronCfg = UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)
         for (iv, name) in [(dirUp, "chevron.compact.up"), (dirDown, "chevron.compact.down"),
                            (dirLeft, "chevron.compact.left"), (dirRight, "chevron.compact.right")] {
@@ -787,13 +790,13 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
 
         // Text panel (hidden)
         tf.placeholder = "输入文字…"; tf.font = .systemFont(ofSize: 16); tf.textColor = .white
-        tf.backgroundColor = UIColor(white: 0.2, alpha: 1); tf.layer.cornerRadius = 14
+        tf.backgroundColor = Theme.surfaceAlt; tf.layer.cornerRadius = 14
         tf.leftView = UIView(frame: CGRect(x: 0, y: 0, width: 16, height: 0)); tf.leftViewMode = .always
         tf.returnKeyType = .send; tf.delegate = self
         sendBtn.setImage(UIImage(systemName: "paperplane.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)), for: .normal)
-        sendBtn.tintColor = .white; sendBtn.backgroundColor = UIColor(red: 1, green: 0.58, blue: 0.22, alpha: 1); sendBtn.layer.cornerRadius = 20; sendBtn.addTarget(self, action: #selector(sendText), for: .touchUpInside)
+        sendBtn.tintColor = .white; sendBtn.backgroundColor = Theme.accent; sendBtn.layer.cornerRadius = 20; sendBtn.addTarget(self, action: #selector(sendText), for: .touchUpInside)
         switchMicBtn.setImage(UIImage(systemName: "mic.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 18, weight: .semibold)), for: .normal)
-        switchMicBtn.tintColor = UIColor(red: 1, green: 0.58, blue: 0.22, alpha: 1); switchMicBtn.backgroundColor = UIColor(white: 0.2, alpha: 1); switchMicBtn.layer.cornerRadius = 20
+        switchMicBtn.tintColor = Theme.accent; switchMicBtn.backgroundColor = Theme.surfaceAlt; switchMicBtn.layer.cornerRadius = 20
         textPanel.translatesAutoresizingMaskIntoConstraints = false; textPanel.isHidden = true
         [switchMicBtn, tf, sendBtn].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; textPanel.addSubview($0) }
         addSubview(textPanel)
@@ -1361,7 +1364,7 @@ final class ScreenPanelView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = UIColor(red: 0.12, green: 0.13, blue: 0.14, alpha: 1)
+        backgroundColor = Theme.videoSurface
         videoView.videoContentMode = .scaleAspectFit; videoView.translatesAutoresizingMaskIntoConstraints = false; addSubview(videoView)
 
         // Grab bar (64pt tall overlay, matches Android screen_grab)
@@ -1388,7 +1391,7 @@ final class ScreenPanelView: UIView {
         loadingSpinner.color = .white; loadingSpinner.hidesWhenStopped = true
         loadingSpinner.translatesAutoresizingMaskIntoConstraints = false; addSubview(loadingSpinner)
         loadingLabel.text = "正在加载桌面…"; loadingLabel.font = .systemFont(ofSize: 14)
-        loadingLabel.textColor = UIColor(white: 0.6, alpha: 1); loadingLabel.textAlignment = .center
+        loadingLabel.textColor = Theme.textSecondary; loadingLabel.textAlignment = .center
         loadingLabel.translatesAutoresizingMaskIntoConstraints = false; addSubview(loadingLabel)
 
         // Long-press on video for scale menu

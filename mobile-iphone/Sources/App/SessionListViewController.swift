@@ -21,7 +21,7 @@ final class SessionListViewController: UIViewController {
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = UIColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1)
+        view.backgroundColor = Theme.bg
         setupViews()
         reload()
         connections.$sessions.receive(on: DispatchQueue.main).sink { [weak self] sessions in
@@ -77,7 +77,7 @@ final class SessionListViewController: UIViewController {
         scanButton.setImage(UIImage(systemName: "qrcode.viewfinder",
                                      withConfiguration: UIImage.SymbolConfiguration(pointSize: 28, weight: .semibold)), for: .normal)
         scanButton.tintColor = .white
-        scanButton.backgroundColor = UIColor(red: 1, green: 0.58, blue: 0.22, alpha: 1)
+        scanButton.backgroundColor = Theme.accent
         scanButton.layer.cornerRadius = 29
         scanButton.addTarget(self, action: #selector(openScanner), for: .touchUpInside)
         view.addSubview(scanButton)
@@ -152,11 +152,12 @@ final class SessionListHeaderView: UIView {
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        backgroundColor = UIColor(white: 0.16, alpha: 1); layer.cornerRadius = 18
+        backgroundColor = Theme.surface; layer.cornerRadius = 22
+        layer.borderWidth = 1; layer.borderColor = Theme.line.cgColor
 
         titleLabel.text = "ChatPUT"
-        titleLabel.font = .systemFont(ofSize: 17, weight: .bold)
-        titleLabel.textColor = UIColor(red: 1, green: 0.58, blue: 0.22, alpha: 1)
+        titleLabel.font = .systemFont(ofSize: 18, weight: .regular)
+        titleLabel.textColor = Theme.accent
 
         statusButton.titleLabel?.font = .systemFont(ofSize: 13, weight: .bold)
         statusButton.layer.cornerRadius = 15
@@ -165,11 +166,11 @@ final class SessionListHeaderView: UIView {
 
         [titleLabel, statusButton].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0) }
         NSLayoutConstraint.activate([
-            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 14),
+            titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 18),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: statusButton.leadingAnchor, constant: -8),
-            titleLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -14),
-            statusButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            titleLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+            statusButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
             statusButton.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
@@ -178,11 +179,11 @@ final class SessionListHeaderView: UIView {
     func update(status: String, connected: Bool) {
         statusButton.setTitle(status, for: .normal)
         if connected {
-            statusButton.setTitleColor(UIColor(red: 0.2, green: 0.8, blue: 0.4, alpha: 1), for: .normal)
-            statusButton.backgroundColor = UIColor(red: 0.2, green: 0.8, blue: 0.4, alpha: 0.15)
+            statusButton.setTitleColor(Theme.statusConnectedText, for: .normal)
+            statusButton.backgroundColor = Theme.statusConnectedBg
         } else {
-            statusButton.setTitleColor(UIColor(white: 0.6, alpha: 1), for: .normal)
-            statusButton.backgroundColor = UIColor(white: 0.2, alpha: 1)
+            statusButton.setTitleColor(Theme.statusIdleText, for: .normal)
+            statusButton.backgroundColor = Theme.statusIdleBg
         }
     }
 
