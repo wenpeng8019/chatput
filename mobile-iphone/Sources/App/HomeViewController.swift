@@ -37,7 +37,7 @@ final class HomeViewController: UIViewController {
                     SessionListViewController(connections: self!.connections), animated: true)
             }
         }.store(in: &cancellables)
-        connections.$status.receive(on: DispatchQueue.main).sink { [weak self] s in self?.headerView.update(status: s, connected: self?.connections.isConnected ?? false) }.store(in: &cancellables)
+        connections.$status.receive(on: DispatchQueue.main).sink { [weak self] s in self?.headerView.update(status: s, connected: self?.connections.isConnected ?? false); self?.updateUI() }.store(in: &cancellables)
     }
 
     override func viewDidLayoutSubviews() {
@@ -113,7 +113,7 @@ final class HomeViewController: UIViewController {
 
             recentStack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 36),
             recentStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -36),
-            recentStack.bottomAnchor.constraint(equalTo: hintContainer.topAnchor, constant: -24),
+            recentStack.bottomAnchor.constraint(equalTo: hintContainer.topAnchor, constant: -36),
 
             hintContainer.centerXAnchor.constraint(equalTo: view.centerXAnchor),
             hintContainer.bottomAnchor.constraint(equalTo: scanButton.topAnchor, constant: -16),
@@ -140,7 +140,7 @@ final class HomeViewController: UIViewController {
         for p in pairings {
             let row = RecentRowView(pairing: p, isConnecting: connections.isConnecting(connectionId: p.id))
             row.onReconnect = { [weak self] in self?.connections.pair(p.payload) }
-            row.onDelete = { [weak self] in self?.connections.removeRecent(payload: p.payload) }
+            row.onDelete = { [weak self] in self?.connections.removeRecent(payload: p.payload); self?.updateUI() }
             recentStack.addArrangedSubview(row)
         }
 

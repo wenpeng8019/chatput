@@ -24,7 +24,10 @@ final class SessionListViewController: UIViewController {
         view.backgroundColor = UIColor(red: 0.12, green: 0.12, blue: 0.14, alpha: 1)
         setupViews()
         reload()
-        connections.$sessions.receive(on: DispatchQueue.main).sink { [weak self] _ in self?.reload() }.store(in: &cancellables)
+        connections.$sessions.receive(on: DispatchQueue.main).sink { [weak self] sessions in
+            self?.reload()
+            if sessions.isEmpty { self?.navigationController?.popToRootViewController(animated: true) }
+        }.store(in: &cancellables)
         connections.$status.receive(on: DispatchQueue.main).sink { [weak self] s in self?.headerView.update(status: s, connected: self?.connections.isConnected ?? false) }.store(in: &cancellables)
     }
 

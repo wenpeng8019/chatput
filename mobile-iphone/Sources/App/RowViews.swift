@@ -60,7 +60,7 @@ final class RecentRowView: UIView {
         [delBtn, label, action].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0) }
         NSLayoutConstraint.activate([
             delBtn.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16), delBtn.centerYAnchor.constraint(equalTo: centerYAnchor),
-            delBtn.widthAnchor.constraint(equalToConstant: 20),
+            delBtn.widthAnchor.constraint(equalToConstant: 44), delBtn.heightAnchor.constraint(equalToConstant: 44),
             label.leadingAnchor.constraint(equalTo: delBtn.trailingAnchor, constant: 12), label.centerYAnchor.constraint(equalTo: centerYAnchor),
             label.trailingAnchor.constraint(lessThanOrEqualTo: action.leadingAnchor, constant: -8),
             action.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14), action.centerYAnchor.constraint(equalTo: centerYAnchor),

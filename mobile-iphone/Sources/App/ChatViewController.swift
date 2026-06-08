@@ -50,12 +50,18 @@ final class ChatViewController: UIViewController {
         navigationController?.interactivePopGestureRecognizer?.isEnabled = true
         setupHeader(); setupMessages(); setupInput(); setupScreenPanel()
         reloadMessages()
-        // Observe session inputAvailable changes (from desktop or engineering menu)
-        connections?.$sessions.receive(on: DispatchQueue.main).sink { [weak self] _ in
-            guard let self, let s = self.session else { return }
-            let dp = s.inputAvailable == false
-            self.dPadMode = dp
-            self.inputBar.isDpadMode = dp
+        // Observe session changes: D-pad mode + auto-back on disconnect
+        connections?.$sessions.receive(on: DispatchQueue.main).sink { [weak self] sessions in
+            guard let self else { return }
+            if sessions.isEmpty {
+                self.navigationController?.popToRootViewController(animated: true)
+                return
+            }
+            if let s = self.session {
+                let dp = s.inputAvailable == false
+                self.dPadMode = dp
+                self.inputBar.isDpadMode = dp
+            }
         }.store(in: &cancellables)
     }
 
