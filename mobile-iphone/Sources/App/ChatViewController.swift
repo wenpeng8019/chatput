@@ -33,6 +33,14 @@ final class ChatViewController: UIViewController {
 
     override var prefersStatusBarHidden: Bool { screenPanel.isOpen }
 
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        guard traitCollection.hasDifferentColorAppearance(comparedTo: previous) else { return }
+        headerBar.layer.borderColor = Theme.line.cgColor
+        inputBar.composerPanel.layer.borderColor = Theme.line.cgColor
+        messageList.reloadData()
+    }
+
     private var session: DesktopSession? {
         connections?.session(connectionId: connectionId, sessionId: sessionId)
     }
@@ -402,11 +410,7 @@ final class ChatViewController: UIViewController {
     }
 
     private func reloadMessages() {
-        let real = session?.messages ?? []
-        messages = real.isEmpty
-            ? [ChatMessage(text: "你好", fromMe: false),
-               ChatMessage(text: "收到，这是一条测试回复消息", fromMe: true)]
-            : real
+        messages = session?.messages ?? []
         messageList.reloadData()
         if let last = messages.last { messageList.scrollToRow(at: IndexPath(row: messages.count-1, section: 0), at: .bottom, animated: false) }
     }
@@ -620,6 +624,14 @@ final class ChatHeaderBar: UIView {
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previous) {
+            layer.borderColor = Theme.line.cgColor
+        }
+    }
+
     func update(app: String, title: String) { (viewWithTag(1) as? UILabel)?.text = app; (viewWithTag(2) as? UILabel)?.text = title }
 
     @objc private func handleTitleTap() {
@@ -657,7 +669,7 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
     private var dpadZones: [UIView] = []
     // Grab handle corner dots (hidden in D-pad mode)
     private var grabDots: [UIView] = []
-    private let composerPanel = UIView()
+    let composerPanel = UIView()
     private let deleteBtn = UIButton(type: .system)
     private let micBtn = UIButton(type: .system)
     private let returnBtn = UIButton(type: .system)
@@ -764,7 +776,7 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
         self.grabDots = grabDots
 
         // Direction hints (chevrons + dots around mic)
-        let tint = Theme.accent.withAlphaComponent(0.34)
+        let tint = UIColor { trait in Theme.accent.resolvedColor(with: trait).withAlphaComponent(0.55) }
         let chevronCfg = UIImage.SymbolConfiguration(pointSize: 15, weight: .regular)
         for (iv, name) in [(dirUp, "chevron.compact.up"), (dirDown, "chevron.compact.down"),
                            (dirLeft, "chevron.compact.left"), (dirRight, "chevron.compact.right")] {
@@ -886,6 +898,13 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
     }
     required init?(coder: NSCoder) { fatalError() }
     @objc private func tapDelete() { onAction?("backspace") }
+
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previous) {
+            composerPanel.layer.borderColor = Theme.line.cgColor
+        }
+    }
 
     // Hold gesture handlers for side buttons
     override func layoutSubviews() { super.layoutSubviews(); positionDpadZones() }

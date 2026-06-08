@@ -50,6 +50,13 @@ final class HomeViewController: UIViewController {
         updateUI()
     }
 
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        guard traitCollection.hasDifferentColorAppearance(comparedTo: previous) else { return }
+        headerView.layer.borderColor = Theme.line.cgColor
+        updateUI()
+    }
+
     private func setupViews() {
         scrollView.showsVerticalScrollIndicator = false
         scrollView.contentInsetAdjustmentBehavior = .never
@@ -215,6 +222,13 @@ final class HomeHeaderView: UIView {
         ])
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        if traitCollection.hasDifferentColorAppearance(comparedTo: previous) {
+            layer.borderColor = Theme.line.cgColor
+        }
+    }
 
     func update(status: String, connected: Bool) {
         statusButton.setTitle(status, for: .normal)
