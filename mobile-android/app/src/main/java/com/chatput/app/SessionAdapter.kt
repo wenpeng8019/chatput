@@ -72,9 +72,10 @@ class SessionAdapter(
         holder.accent.visibility = if (active) View.VISIBLE else View.INVISIBLE
         holder.badge.visibility = if (active) View.VISIBLE else View.GONE
         val bgColor = if (active) R.color.chatput_surface_active else R.color.chatput_surface
-        val strokeColor = if (active) R.color.chatput_accent_soft else R.color.chatput_line
+        val strokeColor = ContextCompat.getColor(holder.itemView.context,
+            if (active) R.color.chatput_accent else R.color.chatput_line)
         holder.card.setCardBackgroundColor(ContextCompat.getColor(holder.itemView.context, bgColor))
-        holder.card.strokeColor = ContextCompat.getColor(holder.itemView.context, strokeColor)
+        holder.card.strokeColor = if (active) (strokeColor and 0x00FFFFFF) or (0x4D shl 24) else strokeColor
 
         holder.itemView.setOnClickListener { onClick(s) }
     }

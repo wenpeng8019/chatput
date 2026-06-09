@@ -1,22 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <color name="chatput_bg">#101418</color>
-    <color name="chatput_surface">#1A2027</color>
-    <color name="chatput_surface_alt">#232B34</color>
-    <color name="chatput_surface_active">#223453</color>
-    <color name="chatput_line">#303946</color>
-    <color name="chatput_accent">#7BA9FF</color>
-    <color name="chatput_accent_strong">#5E91ED</color>
-    <color name="chatput_accent_soft">#263D66</color>
-    <color name="chatput_on_accent">#08111F</color>
-    <color name="chatput_text_primary">#EEF2F6</color>
-    <color name="chatput_text_secondary">#B8C2CD</color>
-    <color name="chatput_text_tertiary">#8F9BA8</color>
-    <color name="chatput_status_connected_bg">#163325</color>
-    <color name="chatput_status_connected_text">#8FE1B0</color>
-    <color name="chatput_status_idle_bg">#232A33</color>
-    <color name="chatput_status_idle_text">#B7C0CB</color>
-    <color name="chatput_message_bubble">#293E65</color>
+    <color name="chatput_bg">#1F1F24</color>
+    <color name="chatput_surface">#292929</color>
+    <color name="chatput_surface_alt">#333333</color>
+    <color name="chatput_surface_active">#333333</color>
+    <color name="chatput_line">#383838</color>
+    <color name="chatput_accent">#FF9438</color>
+    <color name="chatput_accent_strong">#E07020</color>
+    <color name="chatput_accent_soft">#3D2A1A</color>
+    <color name="chatput_on_accent">#FFFFFF</color>
+    <color name="chatput_text_primary">#FFFFFF</color>
+    <color name="chatput_text_secondary">#999999</color>
+    <color name="chatput_text_tertiary">#808080</color>
+    <color name="chatput_status_connected_bg">#1A3D2A</color>
+    <color name="chatput_status_connected_text">#33CC66</color>
+    <color name="chatput_status_idle_bg">#333333</color>
+    <color name="chatput_status_idle_text">#999999</color>
+    <color name="chatput_message_bubble">#292929</color>
     <color name="chatput_danger">#FF8C8C</color>
     <color name="chatput_success">#80D9A0</color>
 </resources>

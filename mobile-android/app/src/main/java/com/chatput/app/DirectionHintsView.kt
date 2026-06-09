@@ -3,12 +3,12 @@ package com.chatput.app
 import android.animation.ValueAnimator
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.util.AttributeSet
 import android.view.View
 import android.view.animation.DecelerateInterpolator
+import androidx.core.content.ContextCompat
 
 /**
  * 麦克风按钮四周的方向提示装饰（仅视觉，不拦截触摸）。
@@ -40,7 +40,7 @@ class DirectionHintsView @JvmOverloads constructor(
     private val chevDepth = dp(3.5f)
     private val dotRadius = dp(1.5f)
 
-    private val tintColor = Color.parseColor("#2D6CDF") // chatput_accent
+    private val tintColor: Int = ContextCompat.getColor(context, R.color.chatput_accent)
     private val baseAlpha = 0.34f
 
     private val strokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
