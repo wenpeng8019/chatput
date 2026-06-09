@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="20dp"
+    android:height="20dp"
+    android:viewportWidth="20"
+    android:viewportHeight="20">
+    <!-- corner dot (r=1.5, center at 1.5,1.5 → top-left at 0,0) -->
+    <path
+        android:pathData="M0,1.5 A1.5,1.5 0 1,1 3,1.5 A1.5,1.5 0 1,1 0,1.5 Z"
+        android:fillColor="@color/chatput_text_tertiary"
+        android:fillAlpha="0.5" />
+    <!-- top edge dot (5dp right from corner) -->
+    <path
+        android:pathData="M5,1.5 A1.5,1.5 0 1,1 8,1.5 A1.5,1.5 0 1,1 5,1.5 Z"
+        android:fillColor="@color/chatput_text_tertiary"
+        android:fillAlpha="0.5" />
+    <!-- left edge dot (5dp down from corner) -->
+    <path
+        android:pathData="M0,6.5 A1.5,1.5 0 1,1 3,6.5 A1.5,1.5 0 1,1 0,6.5 Z"
+        android:fillColor="@color/chatput_text_tertiary"
+        android:fillAlpha="0.5" />
+</vector>

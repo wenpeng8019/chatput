@@ -8,8 +8,8 @@
             android:pivotY="50%">
             <shape
                 android:shape="ring"
-                android:innerRadiusRatio="2.08"
-                android:thicknessRatio="20"
+                android:innerRadiusRatio="1.2"
+                android:thicknessRatio="12"
                 android:useLevel="true">
                 <solid android:color="@color/chatput_accent" />
             </shape>

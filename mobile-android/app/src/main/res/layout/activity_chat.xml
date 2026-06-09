@@ -4,6 +4,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:clipChildren="false"
     android:background="@color/chatput_bg">
 
     <com.google.android.material.card.MaterialCardView
@@ -97,7 +98,7 @@
         android:id="@+id/hint"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="8dp"
+        android:layout_marginBottom="18dp"
         android:gravity="center"
         android:text="按住说话"
         android:textColor="@color/chatput_text_tertiary"
@@ -220,53 +221,47 @@
         app:layout_constraintTop_toTopOf="@id/composer_card"
         app:layout_constraintBottom_toBottomOf="parent" />
 
-    <com.google.android.material.card.MaterialCardView
+    <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/composer_card"
         android:layout_width="0dp"
-        android:layout_height="wrap_content"
+        android:layout_height="84dp"
         android:layout_marginStart="@dimen/screen_margin"
         android:layout_marginEnd="@dimen/screen_margin"
-        android:layout_marginBottom="6dp"
-        app:cardBackgroundColor="@color/chatput_surface"
-        app:cardCornerRadius="@dimen/composer_corner_radius"
-        app:cardElevation="0dp"
-        app:strokeColor="@color/chatput_line"
-        app:strokeWidth="1dp"
+        android:layout_marginBottom="8dp"
+        android:background="@drawable/bg_composer_card"
+        android:clipChildren="false"
+        android:clipToPadding="false"
+        android:paddingStart="@dimen/space_5"
+        android:paddingTop="3dp"
+        android:paddingEnd="@dimen/space_5"
+        android:paddingBottom="3dp"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent">
 
-        <androidx.constraintlayout.widget.ConstraintLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:clipChildren="false"
-            android:clipToPadding="false"
-            android:paddingStart="@dimen/space_5"
-            android:paddingTop="8dp"
-            android:paddingEnd="@dimen/space_5"
-            android:paddingBottom="8dp">
-
+            <!-- orb_halo: between card bg and btn_talk, drawn first of children -->
             <View
                 android:id="@+id/orb_halo"
                 android:layout_width="106dp"
                 android:layout_height="106dp"
                 android:alpha="0"
                 android:background="@drawable/bg_orb_halo"
-                app:layout_constraintBottom_toBottomOf="@id/btn_talk"
-                app:layout_constraintEnd_toEndOf="@id/btn_talk"
-                app:layout_constraintStart_toStartOf="@id/btn_talk"
-                app:layout_constraintTop_toTopOf="@id/btn_talk" />
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
 
+            <!-- direction_hints: above orb_halo, below buttons -->
             <com.chatput.app.DirectionHintsView
                 android:id="@+id/direction_hints"
-                android:layout_width="140dp"
-                android:layout_height="120dp"
+                android:layout_width="112dp"
+                android:layout_height="108dp"
                 android:clickable="false"
                 android:focusable="false"
-                app:layout_constraintBottom_toBottomOf="@id/btn_talk"
-                app:layout_constraintEnd_toEndOf="@id/btn_talk"
-                app:layout_constraintStart_toStartOf="@id/btn_talk"
-                app:layout_constraintTop_toTopOf="@id/btn_talk" />
+                app:layout_constraintBottom_toBottomOf="parent"
+                app:layout_constraintEnd_toEndOf="parent"
+                app:layout_constraintStart_toStartOf="parent"
+                app:layout_constraintTop_toTopOf="parent" />
 
             <FrameLayout
                 android:id="@+id/btn_talk"
@@ -315,8 +310,8 @@
                 <ProgressBar
                     android:id="@+id/clear_progress"
                     style="?android:attr/progressBarStyleHorizontal"
-                    android:layout_width="@dimen/control_primary"
-                    android:layout_height="@dimen/control_primary"
+                    android:layout_width="@dimen/control_medium"
+                    android:layout_height="@dimen/control_medium"
                     android:layout_gravity="center"
                     android:indeterminate="false"
                     android:max="100"
@@ -351,8 +346,8 @@
                 <ProgressBar
                     android:id="@+id/enter_progress"
                     style="?android:attr/progressBarStyleHorizontal"
-                    android:layout_width="@dimen/control_primary"
-                    android:layout_height="@dimen/control_primary"
+                    android:layout_width="@dimen/control_medium"
+                    android:layout_height="@dimen/control_medium"
                     android:layout_gravity="center"
                     android:indeterminate="false"
                     android:max="100"
@@ -362,9 +357,7 @@
 
             </FrameLayout>
 
-        </androidx.constraintlayout.widget.ConstraintLayout>
-
-    </com.google.android.material.card.MaterialCardView>
+    </androidx.constraintlayout.widget.ConstraintLayout>
 
     <!-- 圆角握把装饰（仅视觉，不拦截触摸）：精确覆盖语音面板左上 / 右上圆角弧线 -->
     <FrameLayout
@@ -377,19 +370,19 @@
         app:layout_constraintTop_toTopOf="@id/composer_card">
 
         <ImageView
-            android:layout_width="@dimen/composer_corner_radius"
-            android:layout_height="@dimen/composer_corner_radius"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
             android:layout_gravity="start|top"
             android:contentDescription="@null"
-            android:src="@drawable/ic_grab_corner" />
+            android:src="@drawable/ic_grab_dots" />
 
         <ImageView
-            android:layout_width="@dimen/composer_corner_radius"
-            android:layout_height="@dimen/composer_corner_radius"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
             android:layout_gravity="end|top"
             android:contentDescription="@null"
             android:scaleX="-1"
-            android:src="@drawable/ic_grab_corner" />
+            android:src="@drawable/ic_grab_dots" />
 
     </FrameLayout>
 
@@ -406,8 +399,7 @@
         app:layout_constraintTop_toTopOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintBottom_toTopOf="@id/hint"
-        android:layout_marginBottom="8dp">
+        app:layout_constraintBottom_toTopOf="@id/hint">
 
         <org.webrtc.SurfaceViewRenderer
             android:id="@+id/screen_renderer"

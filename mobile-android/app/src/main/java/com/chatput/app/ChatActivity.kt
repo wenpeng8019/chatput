@@ -768,8 +768,8 @@ class ChatActivity : AppCompatActivity(), ConnectionManager.Observer {
             val visualBottomInset = when { tappable.bottom > 0 -> tappable.bottom; gestures.bottom > 0 -> gestures.bottom / 2; else -> systemBars.bottom / 2 }
             binding.chatHeader.updateLayoutParams<ViewGroup.MarginLayoutParams> { topMargin = 18.dp + systemBars.top }
             binding.list.updatePadding(top = 12.dp, bottom = 8.dp)
-            binding.hint.updateLayoutParams<ViewGroup.MarginLayoutParams> { bottomMargin = 8.dp }
-            binding.composerCard.updateLayoutParams<ViewGroup.MarginLayoutParams> { bottomMargin = 2.dp + visualBottomInset }
+            binding.hint.updateLayoutParams<ViewGroup.MarginLayoutParams> { bottomMargin = 17.dp }
+            binding.composerCard.updateLayoutParams<ViewGroup.MarginLayoutParams> { bottomMargin = 18.dp + systemBars.bottom }
             updateScreenCurtainLift(imeBottom); insets
         }
         ViewCompat.setWindowInsetsAnimationCallback(binding.root, object : androidx.core.view.WindowInsetsAnimationCompat.Callback(

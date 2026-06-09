@@ -32,10 +32,10 @@ class DirectionHintsView @JvmOverloads constructor(
     private fun dp(v: Float) = v * density
 
     // 与 iOS 对应的几何常量
-    private val vR = dp(49f)        // 上下 chevron 与中心距离
-    private val dotNear = dp(44f)   // 常驻点
-    private val dotFar = dp(51f)    // 连续态淡入的第二点
-    private val chevronGap = dp(9f) // chevron 与最外侧点的间距
+    private val vR = dp(54f)        // 上下箭头距中心 (视觉与左右对齐)
+    private val dotNear = dp(48f)   // 常驻点中心距中心 48dp
+    private val dotFar = dp(55f)    // 连续态第二点
+    private val chevronGap = dp(8f) // hR = 48+8 = 56 (左右箭头距中心)
     private val chevHalf = dp(6f)   // chevron 半展宽（扁平：展宽大、进深小）
     private val chevDepth = dp(3.5f)
     private val dotRadius = dp(1.5f)
