@@ -331,9 +331,9 @@ class MainActivity : AppCompatActivity(), ConnectionManager.Observer {
         binding.headerContent.gravity = if (connected) android.view.Gravity.CENTER_VERTICAL else android.view.Gravity.NO_GRAVITY
         binding.headerContent.setPadding(
             if (connected) 16.dp else 16.dp,
-            if (connected) 14.dp else 18.dp,
+            if (connected) 20.dp else 18.dp,
             if (connected) 18.dp else 18.dp,
-            if (connected) 14.dp else 18.dp
+            if (connected) 20.dp else 18.dp
         )
 
         binding.appLabel.textSize = if (connected) 17f else 12f
