@@ -88,6 +88,10 @@ final class Coordinator {
         signaling.close()
         webrtc.close()
         server.stop()
+        if !AppSettings.shared.autoSaveRoomId {
+            AppSettings.shared.savedRoomId = ""
+            AppSettings.shared.savedToken = ""
+        }
         roomId = ""
         token = ""
         DispatchQueue.main.async {
@@ -246,8 +250,15 @@ final class Coordinator {
         state.setStatus(zh: "连接信令服务器…", en: "Connecting to signaling server…", connected: false)
 
         signaling.onOpen = { [weak self] in
-            self?.state.setStatus(zh: "已连接信令，创建房间…", en: "Connected, creating room…", connected: false)
-            self?.signaling.send(["type": Wire.Signal.createRoom])
+            guard let self else { return }
+            let s = AppSettings.shared
+            if s.autoSaveRoomId, !s.savedRoomId.isEmpty, !s.savedToken.isEmpty {
+                state.setStatus(zh: "已连接信令，恢复房间…", en: "Connected, restoring room…", connected: false)
+                signaling.send(["type": Wire.Signal.restoreRoom, "roomId": s.savedRoomId, "token": s.savedToken])
+            } else {
+                state.setStatus(zh: "已连接信令，创建房间…", en: "Connected, creating room…", connected: false)
+                signaling.send(["type": Wire.Signal.createRoom])
+            }
         }
         signaling.onMessage = { [weak self] msg in
             self?.handleSignalingMessage(msg)
@@ -271,6 +282,11 @@ final class Coordinator {
         case Wire.Signal.roomCreated:
             roomId = msg["roomId"] as? String ?? ""
             token = msg["token"] as? String ?? ""
+            // Persist room if auto-save enabled
+            if AppSettings.shared.autoSaveRoomId {
+                AppSettings.shared.savedRoomId = roomId
+                AppSettings.shared.savedToken = token
+            }
             let advertised = settings.advertisedURL
             let refreshed = shouldPromptRescanAfterRefresh
             shouldPromptRescanAfterRefresh = false

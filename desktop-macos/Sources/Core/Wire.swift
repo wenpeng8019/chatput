@@ -61,6 +61,7 @@ enum Wire {
     /// 信令服务器协议（客户端 ⇄ 信令服务器）。
     enum Signal {
         static let createRoom = "create-room"
+        static let restoreRoom = "restore-room"
         static let roomCreated = "room-created"
         static let joinRoom = "join-room"
         static let peerJoined = "peer-joined"

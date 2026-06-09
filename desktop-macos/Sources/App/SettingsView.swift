@@ -48,6 +48,21 @@ struct SettingsView: View {
                     Spacer()
                 }
 
+                HStack(spacing: 12) {
+                    Text(L.t("自动保存房间", "Auto-save room"))
+                        .font(.system(size: 12))
+                        .frame(width: 90, alignment: .leading)
+                    Toggle("", isOn: $settings.autoSaveRoomId)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                    if settings.autoSaveRoomId || !settings.savedRoomId.isEmpty {
+                        Text(settings.savedRoomId.isEmpty ? "—" : settings.savedRoomId)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
+                }
+
                 HStack(alignment: .top, spacing: 12) {
                     Text(L.t("传输模式", "Transport"))
                         .font(.system(size: 12))
@@ -120,6 +135,7 @@ struct SettingsView: View {
                     .id(settings.language)
                     Spacer()
                 }
+
             }
 
             Spacer()

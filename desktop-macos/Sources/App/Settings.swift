@@ -154,6 +154,9 @@ final class AppSettings: ObservableObject {
         static let disableDynamicBitrate = "screen.disableDynamicBitrate"
         static let screenQuality = "screen.quality"
         static let cursorBoundary = "cursor.boundaryMode"
+        static let autoSaveRoomId = "app.autoSaveRoomId"
+        static let savedRoomId = "app.savedRoomId"
+        static let savedToken = "app.savedToken"
     }
 
     /// 配置发生影响连接的变更时触发（由协调器订阅以重启/重连）。
@@ -215,6 +218,16 @@ final class AppSettings: ObservableObject {
     @Published var launchAtLogin: Bool {
         didSet { LoginItem.setEnabled(launchAtLogin) }
     }
+    /// 自动保存并复用房间号，重启后手机无需重新扫码。
+    @Published var autoSaveRoomId: Bool {
+        didSet { defaults.set(autoSaveRoomId, forKey: Key.autoSaveRoomId) }
+    }
+    @Published var savedRoomId: String {
+        didSet { defaults.set(savedRoomId, forKey: Key.savedRoomId) }
+    }
+    @Published var savedToken: String {
+        didSet { defaults.set(savedToken, forKey: Key.savedToken) }
+    }
 
     private let defaults = UserDefaults.standard
 
@@ -244,6 +257,9 @@ final class AppSettings: ObservableObject {
         let boundaryRaw = defaults.string(forKey: Key.cursorBoundary) ?? CursorBoundaryMode.native.rawValue
         cursorBoundary = CursorBoundaryMode(rawValue: boundaryRaw) ?? .native
         launchAtLogin = LoginItem.isEnabled
+        autoSaveRoomId = defaults.bool(forKey: Key.autoSaveRoomId)
+        savedRoomId = defaults.string(forKey: Key.savedRoomId) ?? ""
+        savedToken = defaults.string(forKey: Key.savedToken) ?? ""
     }
 
     /// 内置模式下对外广播的 IP（手动覆盖优先，否则自动探测）。

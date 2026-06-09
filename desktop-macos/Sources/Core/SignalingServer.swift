@@ -194,6 +194,21 @@ final class SignalingServer {
             client.roomId = roomId
             sendJSON(["type": Wire.Signal.roomCreated, "roomId": roomId, "token": token], to: client)
 
+        case Wire.Signal.restoreRoom:
+            let roomId = obj["roomId"] as? String ?? Self.genId(bytes: 3)
+            let token = obj["token"] as? String ?? Self.genId(bytes: 8)
+            // If room with this ID already exists (stale), remove it first
+            if let existing = rooms[roomId] {
+                if let host = existing.host { host.roomId = nil; host.connection.cancel() }
+                if let guest = existing.guest { guest.roomId = nil; guest.connection.cancel() }
+                rooms.removeValue(forKey: roomId)
+            }
+            let room = Room(token: token)
+            room.host = client
+            rooms[roomId] = room
+            client.roomId = roomId
+            sendJSON(["type": Wire.Signal.roomCreated, "roomId": roomId, "token": token], to: client)
+
         case Wire.Signal.joinRoom:
             guard let roomId = obj["roomId"] as? String, let room = rooms[roomId] else {
                 sendJSON(["type": Wire.Signal.error, "reason": Wire.Reason.roomNotFound], to: client)

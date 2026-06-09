@@ -77,6 +77,25 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'restore-room': {
+        const { roomId, token } = msg;
+        if (!roomId || !token) {
+          send(ws, { type: 'error', reason: 'bad-request' });
+          return;
+        }
+        // Clean up stale room if exists
+        const existing = rooms.get(roomId);
+        if (existing) {
+          if (existing.host) { existing.host._roomId = null; existing.host.close(); }
+          if (existing.guest) { existing.guest._roomId = null; existing.guest.close(); }
+          rooms.delete(roomId);
+        }
+        rooms.set(roomId, { token, host: ws, guest: null });
+        ws._roomId = roomId;
+        send(ws, { type: 'room-created', roomId, token });
+        break;
+      }
+
       case 'join-room': {
         const room = rooms.get(msg.roomId);
         if (!room) {
