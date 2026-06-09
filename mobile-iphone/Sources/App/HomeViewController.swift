@@ -187,7 +187,7 @@ final class HomeHeaderView: UIView {
         titleLabel.font = .systemFont(ofSize: 12, weight: .bold)
         titleLabel.textColor = Theme.accent
 
-        subtitleLabel.text = "Agent 时代该有的输入法"
+        subtitleLabel.text = "Hi Agent! \u{1F44B}"
         subtitleLabel.font = .systemFont(ofSize: 24, weight: .bold)
         subtitleLabel.textColor = Theme.textPrimary
 

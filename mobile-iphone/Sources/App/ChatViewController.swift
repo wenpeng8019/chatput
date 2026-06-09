@@ -673,13 +673,17 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
     private let deleteBtn = UIButton(type: .system)
     private let micBtn = UIButton(type: .system)
     private let returnBtn = UIButton(type: .system)
-    // Progress rings for long-press (78pt, matching mic size)
+    // Progress rings for long-press
     private let deleteRing = CAShapeLayer()
     private let returnRing = CAShapeLayer()
+    private var deleteRingContainer: UIView?
+    private var returnRingContainer: UIView?
     private var deleteHoldWork: DispatchWorkItem?
     private var returnHoldWork: DispatchWorkItem?
     private var deletePressed = false
     private var returnPressed = false
+    // Orb halo: press animation behind mic button (matches Android orb_halo)
+    private let orbHalo = UIView()
     // Direction hints around mic
     private let dirUp = UIImageView(); private let dirDown = UIImageView()
     private let dirLeft = UIImageView(); private let dirRight = UIImageView()
@@ -717,21 +721,22 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
         deleteBtn.addTarget(self, action: #selector(deleteTouchUp), for: .touchUpOutside)
         deleteBtn.addTarget(self, action: #selector(deleteTouchUp), for: .touchDragExit)
 
-        // Progress ring (78pt around button)
-        for (ring, btn) in [(deleteRing, deleteBtn), (returnRing, returnBtn)] {
-            ring.path = UIBezierPath(arcCenter: .zero, radius: 39, startAngle: -.pi/2, endAngle: .pi*1.5, clockwise: true).cgPath
-            ring.strokeColor = Theme.accent.cgColor
-            ring.fillColor = UIColor.clear.cgColor
-            ring.lineWidth = 3.9; ring.strokeEnd = 0; ring.lineCap = .round
-            ring.position = CGPoint(x: 28, y: 28) // button center in button's own frame
-            btn.layer.addSublayer(ring)
-        }
+        // ring containers set up at end of init after all addSubviews
+
+        // Orb halo: press animation behind mic button (106pt, matches Android)
+        orbHalo.backgroundColor = Theme.accentSoft
+        orbHalo.layer.cornerRadius = 53
+        orbHalo.isOpaque = true
+        orbHalo.alpha = 0
 
         // Mic button (78x78, accent orange)
         micBtn.setImage(UIImage(systemName: "mic.fill", withConfiguration: UIImage.SymbolConfiguration(pointSize: 30, weight: .semibold)), for: .normal)
         micBtn.tintColor = .white
         micBtn.backgroundColor = Theme.accent
         micBtn.layer.cornerRadius = 39
+        micBtn.addTarget(self, action: #selector(micTouchDown), for: .touchDown)
+        micBtn.addTarget(self, action: #selector(micTouchUp), for: .touchUpInside)
+        micBtn.addTarget(self, action: #selector(micTouchUp), for: .touchUpOutside)
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handleMicDrag(_:)))
         micBtn.addGestureRecognizer(pan)
 
@@ -788,17 +793,21 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
 
         [deleteBtn, micBtn, returnBtn, composerPanel, hintLabel,
          dirUp, dirDown, dirLeft, dirRight,
-         dotNear1, dotNear2, dotFar1, dotFar2].forEach {
+         dotNear1, dotNear2, dotFar1, dotFar2, orbHalo].forEach {
             $0.translatesAutoresizingMaskIntoConstraints = false
         }
         addSubview(hintLabel)
         addSubview(composerPanel)
-        composerPanel.addSubview(deleteBtn)
-        composerPanel.addSubview(micBtn)
-        composerPanel.addSubview(returnBtn)
+        // z-order: grab dots → direction hints → orbHalo → buttons
+        // orbHalo above direction hints so it looks solid (covers chevrons/dots)
+        // (grabDots already added at init)
         [dirUp, dirDown, dirLeft, dirRight, dotNear1, dotNear2, dotFar1, dotFar2].forEach {
             composerPanel.addSubview($0)
         }
+        composerPanel.addSubview(orbHalo)
+        composerPanel.addSubview(deleteBtn)
+        composerPanel.addSubview(micBtn)
+        composerPanel.addSubview(returnBtn)
 
         // Text panel (hidden)
         tf.placeholder = "输入文字…"; tf.font = .systemFont(ofSize: 16); tf.textColor = .white
@@ -852,6 +861,12 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
             micBtn.bottomAnchor.constraint(equalTo: composerPanel.bottomAnchor, constant: -3),
             micBtn.widthAnchor.constraint(equalToConstant: 78), micBtn.heightAnchor.constraint(equalToConstant: 78),
 
+            // Orb halo: centered on mic, 106×106 (matches Android)
+            orbHalo.centerXAnchor.constraint(equalTo: micBtn.centerXAnchor),
+            orbHalo.centerYAnchor.constraint(equalTo: micBtn.centerYAnchor),
+            orbHalo.widthAnchor.constraint(equalToConstant: 106),
+            orbHalo.heightAnchor.constraint(equalToConstant: 106),
+
             // Direction hints around mic
             dirUp.centerXAnchor.constraint(equalTo: micBtn.centerXAnchor),
             dirUp.bottomAnchor.constraint(equalTo: micBtn.topAnchor, constant: -8),
@@ -895,6 +910,22 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
             if c.firstItem === dirLeft, c.secondItem === micBtn { chevronLeftConstraint = c }
             if c.firstItem === dirRight, c.secondItem === micBtn { chevronRightConstraint = c }
         }
+
+        // Ring containers: add to self last so they render above composerPanel border
+        let ringDia = (49 + 4.67/2) * 2
+        for (ring, isDelete) in [(deleteRing, true), (returnRing, false)] {
+            ring.path = UIBezierPath(arcCenter: CGPoint(x: ringDia/2, y: ringDia/2), radius: 49, startAngle: -.pi/2, endAngle: .pi*1.5, clockwise: true).cgPath
+            ring.strokeColor = Theme.accent.cgColor
+            ring.fillColor = UIColor.clear.cgColor
+            ring.lineWidth = 4.67; ring.strokeEnd = 0; ring.lineCap = .round
+            let container = UIView()
+            container.isUserInteractionEnabled = false
+            container.frame = CGRect(x: 0, y: 0, width: ringDia, height: ringDia)
+            container.layer.addSublayer(ring)
+            ring.frame = container.bounds
+            addSubview(container)
+            if isDelete { deleteRingContainer = container } else { returnRingContainer = container }
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
     @objc private func tapDelete() { onAction?("backspace") }
@@ -903,11 +934,22 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
         super.traitCollectionDidChange(previous)
         if traitCollection.hasDifferentColorAppearance(comparedTo: previous) {
             composerPanel.layer.borderColor = Theme.line.cgColor
+            deleteRing.strokeColor = Theme.accent.cgColor
+            returnRing.strokeColor = Theme.accent.cgColor
         }
     }
 
     // Hold gesture handlers for side buttons
-    override func layoutSubviews() { super.layoutSubviews(); positionDpadZones() }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        positionDpadZones()
+        // Position ring containers centered on their buttons
+        for (container, btn) in [(deleteRingContainer, deleteBtn), (returnRingContainer, returnBtn)] {
+            guard let c = container else { continue }
+            let center = convert(btn.center, from: btn.superview!)
+            c.center = center
+        }
+    }
 
     private let holdDuration: TimeInterval = 0.75
 
@@ -939,8 +981,10 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
         anim.isRemovedOnCompletion = false; anim.fillMode = .forwards
         ring.add(anim, forKey: "hold")
         let w = DispatchWorkItem { [weak self] in
-            guard self != nil else { return }
+            guard let self else { return }
             UINotificationFeedbackGenerator().notificationOccurred(.success)
+            ring.removeAnimation(forKey: "hold")
+            ring.strokeEnd = 0
             onHold()
         }
         work = w
@@ -980,6 +1024,27 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
     private var chevronOffset: CGFloat = 53
     private var chevronLeftConstraint: NSLayoutConstraint?
     private var chevronRightConstraint: NSLayoutConstraint?
+
+    // MARK: - Mic button press animation
+
+    @objc private func micTouchDown() {
+        UIView.animate(withDuration: 0.18, delay: 0, options: .curveEaseOut) {
+            self.orbHalo.alpha = 1
+            self.orbHalo.transform = CGAffineTransform(scaleX: 1.12, y: 1.12)
+        }
+    }
+
+    @objc private func micTouchUp() {
+        dismissOrbHalo()
+    }
+
+    /// Dismiss orb halo (called on tap up or when voice recording ends)
+    func dismissOrbHalo() {
+        UIView.animate(withDuration: 0.18, delay: 0, options: .curveEaseOut) {
+            self.orbHalo.alpha = 0
+            self.orbHalo.transform = .identity
+        }
+    }
 
     @objc private func handleMicDrag(_ gesture: UIPanGestureRecognizer) {
         let trans = gesture.translation(in: micBtn)
@@ -1040,6 +1105,7 @@ final class ChatInputBar: UIView, UITextFieldDelegate, UIGestureRecognizerDelega
             setContinuous(false, animated: true)
             setHorizontalHints(visible: true)
             hintLabel.text = "按住说话"
+            dismissOrbHalo()
 
         default: break
         }

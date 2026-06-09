@@ -191,6 +191,13 @@ class SpeechHelper(private val context: Context) {
             return
         }
 
+        // 前置能量检测：过滤静音/极低噪音，避免送入模型产生随机输出
+        val rms = kotlin.math.sqrt(data.sumOf { (it * it).toDouble() } / data.size)
+        if (rms < 1e-4) {
+            postError("没有识别到内容")
+            return
+        }
+
         thread(name = "asr-decode") {
             try {
                 val rec = ensureRecognizer(context.applicationContext, activeMode)
@@ -198,10 +205,13 @@ class SpeechHelper(private val context: Context) {
                 val stream = rec.createStream()
                 stream.acceptWaveform(data, SAMPLE_RATE)
                 rec.decode(stream)
-                val text = rec.getResult(stream).text.trim()
+                val result = rec.getResult(stream)
+                val text = result.text.trim()
+                val event = result.event
                 stream.release()
                 main.post {
-                    if (text.isBlank()) callback?.onError("没有识别到内容")
+                    // SenseVoice 内建静音检测：返回 <nospeech> 事件表示无有效语音
+                    if (event.contains("<nospeech>") || text.isBlank()) callback?.onError("没有识别到内容")
                     else callback?.onResult(text)
                 }
             } catch (e: Exception) {

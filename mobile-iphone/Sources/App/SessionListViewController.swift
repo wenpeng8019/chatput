@@ -174,9 +174,9 @@ final class SessionListHeaderView: UIView {
         [titleLabel, statusButton].forEach { $0.translatesAutoresizingMaskIntoConstraints = false; addSubview($0) }
         NSLayoutConstraint.activate([
             titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 20),
-            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 18),
+            titleLabel.topAnchor.constraint(equalTo: topAnchor, constant: 25),
             titleLabel.trailingAnchor.constraint(lessThanOrEqualTo: statusButton.leadingAnchor, constant: -8),
-            titleLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -16),
+            titleLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -24),
             statusButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
             statusButton.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
