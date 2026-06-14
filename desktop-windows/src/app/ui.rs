@@ -373,6 +373,8 @@ struct UiState {
     bg_brush: HBRUSH,
     /// 设置窗口编辑框 / 日志背景刷。
     ctrl_brush: HBRUSH,
+    /// 设置窗口 Tab 页面底色刷（暗色时用 surface，使页面与窗口外框有灰度区分）。
+    tab_brush: HBRUSH,
     /// 主显示器 DPI 缩放系数（dpi / 96），用于高 DPI（Retina）适配。
     dpi_scale: f64,
     /// 设置窗口专属 DPI 缩放（随窗口所在显示器变化，独立于 popup）。
@@ -435,6 +437,9 @@ impl Drop for UiState {
             }
             if !self.ctrl_brush.is_invalid() {
                 let _ = DeleteObject(HGDIOBJ(self.ctrl_brush.0));
+            }
+            if !self.tab_brush.is_invalid() {
+                let _ = DeleteObject(HGDIOBJ(self.tab_brush.0));
             }
             destroy_set_fonts(self);
         }
@@ -510,6 +515,11 @@ pub fn run(state: AppState, ui_tx: UnboundedSender<UiCommand>, settings: AppSett
         } else {
             (HBRUSH(null_mut()), HBRUSH(null_mut()))
         };
+        let tab_brush = if theme.dark {
+            CreateSolidBrush(theme.surface)
+        } else {
+            HBRUSH(null_mut())
+        };
 
         let dpi_scale = get_dpi_scale();
 
@@ -534,6 +544,7 @@ pub fn run(state: AppState, ui_tx: UnboundedSender<UiCommand>, settings: AppSett
             theme,
             bg_brush,
             ctrl_brush,
+            tab_brush,
             dpi_scale,
             set_scale: dpi_scale,
             sf_heading: HFONT(null_mut()),
@@ -856,9 +867,14 @@ unsafe fn refresh_theme(st: &mut UiState) {
         let _ = DeleteObject(HGDIOBJ(st.ctrl_brush.0));
         st.ctrl_brush = HBRUSH(null_mut());
     }
+    if !st.tab_brush.is_invalid() {
+        let _ = DeleteObject(HGDIOBJ(st.tab_brush.0));
+        st.tab_brush = HBRUSH(null_mut());
+    }
     if new.dark {
         st.bg_brush = CreateSolidBrush(new.popup_bg);
         st.ctrl_brush = CreateSolidBrush(new.control_bg);
+        st.tab_brush = CreateSolidBrush(new.surface);
     }
 
     // 托盘图标随任务栏明暗重绘。
@@ -1533,8 +1549,10 @@ unsafe extern "system" fn settings_wndproc(
                         .map(|(_, c)| *c)
                         .unwrap_or(st.theme.text_primary);
                     SetTextColor(hdc, text);
-                    SetBkColor(hdc, st.theme.popup_bg);
-                    return LRESULT(st.bg_brush.0 as isize);
+                    // 标签/复选框/单选等位于 Tab 页上，用页面 surface 底色（比窗口外框略亮），
+                    // 使页面有「抬升卡片」的灰度区分。
+                    SetBkColor(hdc, st.theme.surface);
+                    return LRESULT(st.tab_brush.0 as isize);
                 }
             }
             // 浅色下拉列表：交给系统默认绘制，避免误用 Tab 页底色导致悬停文字异常。
@@ -1697,7 +1715,12 @@ unsafe extern "system" fn tab_dark_wndproc(
             let hdc = BeginPaint(hwnd, &mut ps);
             let mut client = RECT::default();
             let _ = GetClientRect(hwnd, &mut client);
+            // 标签条背景用窗口外框色（popup_bg）。
             FillRect(hdc, &client, st.bg_brush);
+            // 页面主体（display area）用 surface 底色，使其相对窗口外框有灰度区分（抬升卡片感）。
+            let mut page = client;
+            SendMessageW(hwnd, TCM_ADJUSTRECT, WPARAM(0), LPARAM(&mut page as *mut RECT as isize));
+            FillRect(hdc, &page, st.tab_brush);
 
             let font = HFONT(SendMessageW(hwnd, WM_GETFONT, WPARAM(0), LPARAM(0)).0 as *mut c_void);
             let old_font = SelectObject(hdc, HGDIOBJ(font.0));
@@ -1730,7 +1753,8 @@ unsafe extern "system" fn tab_dark_wndproc(
                     LPARAM(&mut item as *mut TcItemW as isize),
                 );
                 if i == sel {
-                    FillRect(hdc, &rc, st.ctrl_brush);
+                    // 选中标签用页面 surface 底色，与页面主体连为一体；未选中保持外框深色。
+                    FillRect(hdc, &rc, st.tab_brush);
                     SetTextColor(hdc, st.theme.text_primary);
                 } else {
                     SetTextColor(hdc, st.theme.text_secondary);
