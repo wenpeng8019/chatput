@@ -18,7 +18,7 @@ struct SettingsView: View {
             generalTab
                 .tabItem { Label(L.t("通用", "General"), systemImage: "gearshape") }
             screenTab
-                .tabItem { Label(L.t("远程画面", "Screen"), systemImage: "display") }
+                .tabItem { Label(L.t("远程桌面", "Screen"), systemImage: "display") }
             builtInTab
                 .tabItem { Label(L.t("内置服务", "Built-in"), systemImage: "house") }
             externalTab
@@ -111,15 +111,6 @@ struct SettingsView: View {
                     Spacer()
                 }
 
-                HStack(spacing: 12) {
-                    Text(L.t("调试热区", "Debug zones"))
-                        .font(.system(size: 12))
-                        .frame(width: 90, alignment: .leading)
-                    Toggle("", isOn: $settings.debugHotZones)
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                    Spacer()
-                }
 
                 HStack(spacing: 12) {
                     Text(L.t("语言", "Language"))
@@ -144,11 +135,11 @@ struct SettingsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    // MARK: - 远程画面
+    // MARK: - 远程桌面
 
     private var screenTab: some View {
         VStack(alignment: .leading, spacing: 18) {
-            sectionHeader(L.t("远程画面", "Screen"),
+            sectionHeader(L.t("远程桌面", "Screen"),
                           subtitle: L.t("远程桌面的采集、编码与交互参数。",
                                         "Capture, encoding and interaction settings for remote screen."))
 

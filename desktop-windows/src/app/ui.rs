@@ -31,6 +31,7 @@ use windows::Win32::System::Registry::{
 };
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
+use windows::Win32::UI::HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow};
 use windows::Win32::UI::Controls::{
     CloseThemeData, DrawThemeBackground, InitCommonControlsEx, OpenThemeData, SetWindowTheme,
     HTHEME, ICC_TAB_CLASSES, INITCOMMONCONTROLSEX,
@@ -54,7 +55,19 @@ const TIMER_TRAY_REFRESH: usize = 3;
 const POPUP_W: i32 = 300;
 const POPUP_H: i32 = 420;
 const SET_W: i32 = 500;
-const SET_H: i32 = 470;
+const SET_H: i32 = 380;
+
+/// 获取主显示器 DPI 缩放系数（dpi / 96），用于高 DPI（Retina）适配。
+/// PerMonitorV2 DPI 感知下，程序需自行缩放窗口和字体。
+unsafe fn get_dpi_scale() -> f64 {
+    let hdc = GetDC(None);
+    if hdc.is_invalid() {
+        return 1.0;
+    }
+    let dpi = GetDeviceCaps(hdc, LOGPIXELSX);
+    ReleaseDC(None, hdc);
+    (dpi as f64 / 96.0).max(1.0)
+}
 
 /// 托盘菜单。
 const ID_QUIT: usize = 1004;
@@ -71,6 +84,13 @@ const ID_BTN_SAVE_BUILTIN: usize = 2007;
 const ID_BTN_SAVE_EXTERNAL: usize = 2008;
 const ID_ED_LOG: usize = 2009;
 const ID_BTN_CLEAR: usize = 2010;
+// 画面（2.0）
+const ID_CB_FPS: usize = 2011;
+const ID_CB_CODEC: usize = 2012;
+const ID_CB_SCALE: usize = 2013;
+const ID_CB_QUALITY: usize = 2014;
+const ID_CHK_BITRATE: usize = 2015;
+const ID_CHK_AUTO_ROOM: usize = 2017;
 const ID_TAB: usize = 2100;
 
 // Win32 子控件样式 / 消息（crate 未直接导出的部分）。
@@ -100,15 +120,28 @@ const ICON_BIG: u32 = 1;
 const TABP_BODY: i32 = 10;
 const EM_SETSEL: u32 = 0x00B1;
 const EM_SCROLLCARET: u32 = 0x00B7;
+const EM_REPLACESEL: u32 = 0x00C2;
 const EM_SETCUEBANNER: u32 = 0x1501;
+// Listbox 消息。
+const LB_ADDSTRING: u32 = 0x0180;
+const LB_RESETCONTENT: u32 = 0x0184;
+const LB_GETCURSEL: u32 = 0x0188;
+const LB_SETCURSEL: u32 = 0x0186;
+const LB_GETCOUNT: u32 = 0x018B;
+const LB_GETTOPINDEX: u32 = 0x018E;
+const LB_SETTOPINDEX: u32 = 0x0197;
+// Listbox 样式。
+const LBS_NOINTEGRALHEIGHT: u32 = 0x0100;
 
 // Tab 控件消息 / 通知。
 const TCM_FIRST: u32 = 0x1300;
 const TCM_INSERTITEMW: u32 = TCM_FIRST + 62;
 const TCM_GETCURSEL: u32 = TCM_FIRST + 11;
+const TCM_SETCURSEL: u32 = TCM_FIRST + 12;
 const TCM_GETITEMCOUNT: u32 = TCM_FIRST + 4;
 const TCM_GETITEMRECT: u32 = TCM_FIRST + 10;
 const TCM_GETITEMW: u32 = TCM_FIRST + 60;
+const TCM_ADJUSTRECT: u32 = TCM_FIRST + 40;
 
 // 编辑控件消息（windows crate 未在 glob 中导出，按 Win32 文档常量手动声明）。
 const EM_GETRECT: u32 = 0x00B2;
@@ -340,6 +373,16 @@ struct UiState {
     bg_brush: HBRUSH,
     /// 设置窗口编辑框 / 日志背景刷。
     ctrl_brush: HBRUSH,
+    /// 主显示器 DPI 缩放系数（dpi / 96），用于高 DPI（Retina）适配。
+    dpi_scale: f64,
+    /// 设置窗口专属 DPI 缩放（随窗口所在显示器变化，独立于 popup）。
+    set_scale: f64,
+    /// 设置窗口专属字体（按 set_scale 重建，避免影响 popup 字体）。
+    sf_heading: HFONT,
+    sf_normal: HFONT,
+    sf_label: HFONT,
+    sf_small: HFONT,
+    sf_dot: HFONT,
     // 设置控件。
     tab: HWND,
     /// Tab 主题句柄，用于把控件背景填成与 Tab 页一致的底色。
@@ -361,6 +404,14 @@ struct UiState {
     sb_drag: bool,
     sb_drag_off: i32,
     btn_save_external: HWND,
+    // 画面 Tab（2.0）
+    cb_fps: HWND,
+    cb_codec: HWND,
+    cb_scale: HWND,
+    cb_quality: HWND,
+    chk_bitrate: HWND,
+    // 通用 Tab 扩展（2.0）
+    chk_auto_room: HWND,
 }
 
 impl Drop for UiState {
@@ -385,6 +436,7 @@ impl Drop for UiState {
             if !self.ctrl_brush.is_invalid() {
                 let _ = DeleteObject(HGDIOBJ(self.ctrl_brush.0));
             }
+            destroy_set_fonts(self);
         }
     }
 }
@@ -427,8 +479,9 @@ pub fn run(state: AppState, ui_tx: UnboundedSender<UiCommand>, settings: AppSett
         RegisterClassW(&popup_wc);
 
         // 设置窗口类（标准对话框灰底）。
+        // 不设 CS_HREDRAW | CS_VREDRAW：该窗口禁止 resize，不需要这些 style。
         let set_wc = WNDCLASSW {
-            style: CS_HREDRAW | CS_VREDRAW,
+            style: WNDCLASS_STYLES::default(),
             lpfnWndProc: Some(settings_wndproc),
             hInstance: hinstance,
             hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
@@ -458,6 +511,8 @@ pub fn run(state: AppState, ui_tx: UnboundedSender<UiCommand>, settings: AppSett
             (HBRUSH(null_mut()), HBRUSH(null_mut()))
         };
 
+        let dpi_scale = get_dpi_scale();
+
         let st = Box::new(UiState {
             state,
             settings,
@@ -467,18 +522,25 @@ pub fn run(state: AppState, ui_tx: UnboundedSender<UiCommand>, settings: AppSett
             settings_win: HWND(null_mut()),
             last_hide: None,
             buttons: Vec::new(),
-            font_heading: make_font(-17, 700),
-            font_normal: make_font(-15, 400),
-            font_label: make_font(-13, 400),
-            font_small: make_font(-12, 400),
-            font_icon: make_icon_font(-15),
-            font_dot: make_icon_font(-11),
+            font_heading: make_font(-(17.0 * dpi_scale) as i32, 700),
+            font_normal: make_font(-(15.0 * dpi_scale) as i32, 400),
+            font_label: make_font(-(13.0 * dpi_scale) as i32, 400),
+            font_small: make_font(-(12.0 * dpi_scale) as i32, 400),
+            font_icon: make_icon_font(-(15.0 * dpi_scale) as i32),
+            font_dot: make_icon_font(-(11.0 * dpi_scale) as i32),
             tray_icon: create_tray_icon(),
             app_icon: create_app_icon(256),
             nid: NOTIFYICONDATAW::default(),
             theme,
             bg_brush,
             ctrl_brush,
+            dpi_scale,
+            set_scale: dpi_scale,
+            sf_heading: HFONT(null_mut()),
+            sf_normal: HFONT(null_mut()),
+            sf_label: HFONT(null_mut()),
+            sf_small: HFONT(null_mut()),
+            sf_dot: HFONT(null_mut()),
             tab: HWND(null_mut()),
             tab_theme: HTHEME::default(),
             cur_tab: 0,
@@ -495,10 +557,18 @@ pub fn run(state: AppState, ui_tx: UnboundedSender<UiCommand>, settings: AppSett
             sb_drag: false,
             sb_drag_off: 0,
             btn_save_external: HWND(null_mut()),
+            cb_fps: HWND(null_mut()),
+            cb_codec: HWND(null_mut()),
+            cb_scale: HWND(null_mut()),
+            cb_quality: HWND(null_mut()),
+            chk_bitrate: HWND(null_mut()),
+            chk_auto_room: HWND(null_mut()),
         });
         let ptr = Box::into_raw(st);
 
         let style = WINDOW_STYLE(WS_POPUP.0);
+        let pw = (POPUP_W as f64 * dpi_scale) as i32;
+        let ph = (POPUP_H as f64 * dpi_scale) as i32;
         let popup = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             POPUP_CLASS,
@@ -506,8 +576,8 @@ pub fn run(state: AppState, ui_tx: UnboundedSender<UiCommand>, settings: AppSett
             style,
             0,
             0,
-            POPUP_W,
-            POPUP_H,
+            pw,
+            ph,
             None,
             None,
             hinstance,
@@ -518,6 +588,20 @@ pub fn run(state: AppState, ui_tx: UnboundedSender<UiCommand>, settings: AppSett
         position_popup(popup);
         let _ = ShowWindow(popup, SW_SHOW);
         let _ = SetForegroundWindow(popup);
+
+        // 测试辅助：CHATPUT_OPEN_SETTINGS 环境变量存在时直接打开设置窗口，便于截图核对布局。
+        // 取值为 0..4 时同时切换到对应 tab。
+        if let Ok(v) = std::env::var("CHATPUT_OPEN_SETTINGS") {
+            if let Some(st) = state_ptr(popup) {
+                open_settings(st);
+                if let Ok(idx) = v.parse::<i32>() {
+                    if (0..5).contains(&idx) {
+                        SendMessageW(st.tab, TCM_SETCURSEL, WPARAM(idx as usize), LPARAM(0));
+                        apply_tab_visibility(st, idx);
+                    }
+                }
+            }
+        }
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).0 > 0 {
@@ -679,9 +763,13 @@ unsafe fn position_popup(hwnd: HWND) {
         Some(&mut wa as *mut RECT as *mut c_void),
         SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
     );
-    let x = (wa.right - POPUP_W - 8).max(wa.left + 8);
-    let y = (wa.bottom - POPUP_H - 8).max(wa.top + 8);
-    let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, POPUP_W, POPUP_H, SWP_NOACTIVATE);
+    let mut cr = RECT::default();
+    let _ = GetWindowRect(hwnd, &mut cr);
+    let w = cr.right - cr.left;
+    let h = cr.bottom - cr.top;
+    let x = (wa.right - w - 8).max(wa.left + 8);
+    let y = (wa.bottom - h - 8).max(wa.top + 8);
+    let _ = SetWindowPos(hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE);
 }
 
 unsafe fn toggle_popup(st: &mut UiState) {
@@ -1165,8 +1253,9 @@ unsafe fn paint_popup_body(st: &mut UiState, hdc: HDC, rc: &RECT) {
         )
     });
 
-    let pad = 16;
-    let mut y = 16;
+    let s = st.dpi_scale;
+    let pad = (16.0 * s) as i32;
+    let mut y = pad;
 
     // 顶部状态。
     let dot_color = if connected {
@@ -1177,15 +1266,15 @@ unsafe fn paint_popup_body(st: &mut UiState, hdc: HDC, rc: &RECT) {
         st.theme.idle_dot
     };
     // 抗锯齿圆点字形，垂直居中于标题/副标题两行之间。
-    let dot_rc = RECT { left: pad, top: y + 7, right: pad + 14, bottom: y + 31 };
+    let dot_rc = RECT { left: pad, top: y + (7.0 * s) as i32, right: pad + (14.0 * s) as i32, bottom: y + (31.0 * s) as i32 };
     draw_glyph(hdc, st.font_dot, '\u{E91F}', dot_rc, dot_color);
 
     text_out(
         hdc,
         st.font_heading,
         st.theme.text_primary,
-        pad + 20,
-        y - 1,
+        pad + (20.0 * s) as i32,
+        y - (1.0 * s) as i32,
         &localization::t("ChatPUT", "ChatPUT"),
     );
     let line = if connected && !device.is_empty() {
@@ -1193,15 +1282,15 @@ unsafe fn paint_popup_body(st: &mut UiState, hdc: HDC, rc: &RECT) {
     } else {
         status
     };
-    text_out(hdc, st.font_small, st.theme.text_secondary, pad + 20, y + 24, &line);
-    y += 52;
+    text_out(hdc, st.font_small, st.theme.text_secondary, pad + (20.0 * s) as i32, y + (24.0 * s) as i32, &line);
+    y += (52.0 * s) as i32;
 
     divider(hdc, pad, rc.right - pad, y, st.theme.line);
-    y += 12;
+    y += (12.0 * s) as i32;
 
     // 二维码白底卡片。
-    let card = 220;
-    let target = 200;
+    let card = (220.0 * s) as i32;
+    let target = (200.0 * s) as i32;
     let cx = (rc.right - card) / 2;
     let card_rc = RECT { left: cx, top: y, right: cx + card, bottom: y + card };
     let white = CreateSolidBrush(COLORREF(0x00FFFFFF));
@@ -1222,14 +1311,14 @@ unsafe fn paint_popup_body(st: &mut UiState, hdc: HDC, rc: &RECT) {
             draw_text_centered(hdc, st.font_normal, COLORREF(0x00909090), card_rc, &msg);
         }
     }
-    y += card + 8;
+    y += card + (8.0 * s) as i32;
 
     if !url.is_empty() {
-        let r = RECT { left: rc.left, top: y, right: rc.right, bottom: y + 16 };
+        let r = RECT { left: rc.left, top: y, right: rc.right, bottom: y + (16.0 * s) as i32 };
         draw_text_centered(hdc, st.font_small, st.theme.text_secondary, r, &url);
-        y += 18;
+        y += (18.0 * s) as i32;
     }
-    let hint = RECT { left: rc.left, top: y, right: rc.right, bottom: y + 16 };
+    let hint = RECT { left: rc.left, top: y, right: rc.right, bottom: y + (16.0 * s) as i32 };
     draw_text_centered(
         hdc,
         st.font_small,
@@ -1239,9 +1328,9 @@ unsafe fn paint_popup_body(st: &mut UiState, hdc: HDC, rc: &RECT) {
     );
 
     // 底部分隔线 + 操作。
-    let btn_h = 34;
-    let by = rc.bottom - btn_h - 16;
-    divider(hdc, pad, rc.right - pad, by - 14, st.theme.line);
+    let btn_h = (34.0 * s) as i32;
+    let by = rc.bottom - btn_h - pad;
+    divider(hdc, pad, rc.right - pad, by - (14.0 * s) as i32, st.theme.line);
 
     let (toggle_btn, toggle_label, toggle_icon) = if service_active {
         (Btn::Stop, localization::t("停止", "Stop"), IconKind::Stop)
@@ -1249,11 +1338,11 @@ unsafe fn paint_popup_body(st: &mut UiState, hdc: HDC, rc: &RECT) {
         (Btn::Start, localization::t("启动", "Start"), IconKind::Play)
     };
     // 左：启停（强调，图标 + 文字）。
-    draw_button(st, hdc, pad, by, 84, btn_h, toggle_btn, &toggle_label, Some(toggle_icon), service_active);
+    draw_button(st, hdc, pad, by, (84.0 * s) as i32, btn_h, toggle_btn, &toggle_label, Some(toggle_icon), service_active);
     // 右：设置、退出（仅图标方形按钮，对齐 macOS gearshape / power）。
     let sq = btn_h;
     let qx = rc.right - pad - sq;
-    let sx = qx - 8 - sq;
+    let sx = qx - (8.0 * s) as i32 - sq;
     draw_button(st, hdc, sx, by, sq, btn_h, Btn::Settings, "", Some(IconKind::Gear), false);
     draw_button(st, hdc, qx, by, sq, btn_h, Btn::Quit, "", Some(IconKind::Power), false);
 }
@@ -1294,16 +1383,16 @@ unsafe fn draw_button(
         }
     } else {
         // 图标 + 文字作为整体居中。
-        const ICON_W: i32 = 16;
-        const GAP: i32 = 5;
+        let icon_w = (16.0 * st.dpi_scale) as i32;
+        let gap = (5.0 * st.dpi_scale) as i32;
         let tw = text_width(hdc, st.font_normal, label);
-        let group = ICON_W + GAP + tw;
+        let group = icon_w + gap + tw;
         let gx = x + (w - group) / 2;
         if let Some(k) = icon {
-            let ir = RECT { left: gx, top: y, right: gx + ICON_W, bottom: y + h };
+            let ir = RECT { left: gx, top: y, right: gx + icon_w, bottom: y + h };
             draw_icon(st, hdc, k, ir, textc);
         }
-        let tr = RECT { left: gx + ICON_W + GAP, top: y, right: gx + group, bottom: y + h };
+        let tr = RECT { left: gx + icon_w + gap, top: y, right: gx + group, bottom: y + h };
         draw_text_left(hdc, st.font_normal, textc, tr, label);
     }
     st.buttons.push((id, r));
@@ -1342,20 +1431,22 @@ unsafe fn open_settings(st: &mut UiState) {
     }
     let ptr = st as *mut UiState;
     let style = WINDOW_STYLE(
-        WS_OVERLAPPEDWINDOW.0 & !WS_THICKFRAME.0 & !WS_MAXIMIZEBOX.0,
+        (WS_OVERLAPPEDWINDOW.0 & !WS_THICKFRAME.0 & !WS_MAXIMIZEBOX.0) | WS_CLIPCHILDREN.0,
     );
-    let sw = GetSystemMetrics(SM_CXSCREEN);
-    let sh = GetSystemMetrics(SM_CYSCREEN);
+    let screen_w = GetSystemMetrics(SM_CXSCREEN);
+    let screen_h = GetSystemMetrics(SM_CYSCREEN);
+    let set_w = (SET_W as f64 * st.dpi_scale) as i32;
+    let set_h = (SET_H as f64 * st.dpi_scale) as i32;
     let title = to_wide(&localization::t("ChatPUT · 设置", "ChatPUT · Settings"));
     let hwnd = CreateWindowExW(
         WINDOW_EX_STYLE::default(),
         SETTINGS_CLASS,
         PCWSTR(title.as_ptr()),
         style,
-        (sw - SET_W) / 2,
-        (sh - SET_H) / 2,
-        SET_W,
-        SET_H,
+        (screen_w - set_w) / 2,
+        (screen_h - set_h) / 2,
+        set_w,
+        set_h,
         None,
         None,
         st.hinstance,
@@ -1393,13 +1484,32 @@ unsafe extern "system" fn settings_wndproc(
         WM_CREATE => {
             if let Some(st) = state_ptr(hwnd) {
                 build_settings(st, hwnd);
-                SetTimer(hwnd, TIMER_LOG, 600, None);
+                SetTimer(hwnd, TIMER_LOG, 2000, None);
             }
             LRESULT(0)
         }
         WM_CTLCOLOREDIT | WM_CTLCOLORSTATIC | WM_CTLCOLORBTN | WM_CTLCOLORLISTBOX => {
             let hdc = HDC(wparam.0 as *mut c_void);
             let ctl = HWND(lparam.0 as *mut c_void);
+            // 日志编辑框为 ES_READONLY，系统发的是 WM_CTLCOLORSTATIC 而非 EDIT。
+            // 必须最先单独处理：用 OPAQUE 背景 + 实心画刷，避免被通用 STATIC 分支
+            // 设成 TRANSPARENT + DrawThemeBackground + NULL_BRUSH——那会导致选中文本时
+            // 仅选中行重绘、其余行因透明/空刷而看不见。
+            if let Some(st) = state_ptr(hwnd) {
+                if ctl == st.ed_log && !st.ed_log.is_invalid() {
+                    SetBkMode(hdc, OPAQUE);
+                    if st.theme.dark {
+                        SetTextColor(hdc, st.theme.control_text);
+                        SetBkColor(hdc, st.theme.control_bg);
+                        return LRESULT(st.ctrl_brush.0 as isize);
+                    } else {
+                        SetTextColor(hdc, COLORREF(0x00000000));
+                        SetBkColor(hdc, COLORREF(0x00FFFFFF));
+                        let brush = GetSysColorBrush(COLOR_WINDOW);
+                        return LRESULT(brush.0 as isize);
+                    }
+                }
+            }
             // 暗色：编辑框走深底深字，标签/按钮透明文字置于暗背景上。
             if let Some(st) = state_ptr(hwnd) {
                 if st.theme.dark {
@@ -1410,6 +1520,7 @@ unsafe extern "system" fn settings_wndproc(
                         return LRESULT(st.ctrl_brush.0 as isize);
                     }
                     if msg == WM_CTLCOLOREDIT {
+                        SetBkMode(hdc, OPAQUE);
                         SetTextColor(hdc, st.theme.control_text);
                         SetBkColor(hdc, st.theme.control_bg);
                         return LRESULT(st.ctrl_brush.0 as isize);
@@ -1426,16 +1537,6 @@ unsafe extern "system" fn settings_wndproc(
                     return LRESULT(st.bg_brush.0 as isize);
                 }
             }
-            if msg == WM_CTLCOLOREDIT {
-                if let Some(st) = state_ptr(hwnd) {
-                    if ctl == st.ed_log {
-                        SetTextColor(hdc, COLORREF(0x00000000));
-                        SetBkColor(hdc, COLORREF(0x00FFFFFF));
-                        let brush = GetSysColorBrush(COLOR_WINDOW);
-                        return LRESULT(brush.0 as isize);
-                    }
-                }
-            }
             // 浅色下拉列表：交给系统默认绘制，避免误用 Tab 页底色导致悬停文字异常。
             if msg == WM_CTLCOLORLISTBOX {
                 return DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -1443,7 +1544,13 @@ unsafe extern "system" fn settings_wndproc(
             // CBS_DROPDOWNLIST 下拉框的面会发 WM_CTLCOLORSTATIC；若按普通标签用 Tab 底色
             // 覆盖其客户区，会把边框与下拉箭头一起涂掉。故交给系统默认绘制。
             if let Some(st) = state_ptr(hwnd) {
-                if ctl == st.cb_transport || ctl == st.cb_language {
+                if ctl == st.cb_transport
+                    || ctl == st.cb_language
+                    || ctl == st.cb_codec
+                    || ctl == st.cb_fps
+                    || ctl == st.cb_scale
+                    || ctl == st.cb_quality
+                {
                     return DefWindowProcW(hwnd, msg, wparam, lparam);
                 }
             }
@@ -1502,10 +1609,27 @@ unsafe extern "system" fn settings_wndproc(
             }
             LRESULT(0)
         }
+        WM_DPICHANGED => {
+            // 系统建议的新窗口矩形（位置+尺寸）随新 DPI 给出；先应用再按新缩放重排控件。
+            let rc = &*(lparam.0 as *const RECT);
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                rc.left,
+                rc.top,
+                rc.right - rc.left,
+                rc.bottom - rc.top,
+                SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+            if let Some(st) = state_ptr(hwnd) {
+                rebuild_settings(st, hwnd);
+            }
+            LRESULT(0)
+        }
         WM_TIMER => {
             if wparam.0 == TIMER_LOG {
                 if let Some(st) = state_ptr(hwnd) {
-                    if st.cur_tab == 3 {
+                    if st.cur_tab == 4 {
                         refresh_log(st);
                     }
                 }
@@ -1840,168 +1964,350 @@ unsafe fn rebuild_settings(st: &mut UiState, hwnd: HWND) {
     );
 }
 
-unsafe fn build_settings(st: &mut UiState, hwnd: HWND) {
-    let font = st.font_normal;
-    // Tab 控件占据上方；表单控件是设置窗口的子窗口，背景在 WM_CTLCOLOR 中用 Tab 主题填充以保持一致。
-    let tab = child(
+/// 按目标客户区尺寸调整设置窗口（含标题栏/边框，按当前 DPI 换算），保持左上角不变。
+unsafe fn resize_settings_client(hwnd: HWND, client_w: i32, client_h: i32, scale: f64) {
+    let mut r = RECT { left: 0, top: 0, right: client_w, bottom: client_h };
+    let style = WINDOW_STYLE(GetWindowLongPtrW(hwnd, GWL_STYLE) as u32);
+    let ex = WINDOW_EX_STYLE(GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32);
+    let dpi = (scale * 96.0).round() as u32;
+    let _ = AdjustWindowRectExForDpi(&mut r, style, FALSE, ex, dpi);
+    let _ = SetWindowPos(
         hwnd,
-        w!("SysTabControl32"),
-        "",
-        WS_CLIPSIBLINGS.0,
-        8,
-        8,
-        SET_W - 32,
-        SET_H - 56,
-        ID_TAB,
-        font,
+        None,
+        0,
+        0,
+        r.right - r.left,
+        r.bottom - r.top,
+        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+    );
+}
+
+
+unsafe fn build_settings(st: &mut UiState, hwnd: HWND) {
+    // 按设置窗口所在显示器 DPI 重建专属字体（Per-Monitor 动态适配，独立于 popup）。
+    ensure_set_fonts(st, dpi_for_window(hwnd));
+    let s = st.set_scale;
+    let nf = st.sf_normal;
+    let lf = st.sf_label;
+    let sf = st.sf_small;
+    let px = |v: f64| (v * s) as i32;
+
+    // ── 布局常量（逻辑像素 × set_scale）──
+    let margin = px(12.0); // 窗口边缘到 tab
+    let pad = px(16.0); // tab 页内 padding
+    let row_gap = px(14.0); // 选项行间距
+    let note_gap = px(4.0); // 控件到描述间距
+    let header_gap = px(12.0); // section header 到首行
+    let label_w = px(96.0); // 标签列宽
+    let label_gap = px(10.0); // 标签到控件列间距
+    let combo_sw = px(120.0); // 小下拉宽
+    let qual_w = px(150.0); // 画质下拉宽
+    let chk_w = px(18.0); // checkbox 宽
+    let edit_w = px(130.0); // 小编辑框宽（端口）
+    let btn_w = px(140.0); // 执行按钮宽
+    let clr_w = px(96.0); // 清空按钮宽
+
+    // ── 控件高度（按字体动态推导，适配字体/DPI 变化）──
+    let th = font_text_height(nf);
+    let label_h = font_text_height(lf) + px(4.0);
+    let small_h = font_text_height(sf);
+    let edit_h = th + px(8.0);
+    let btn_h = th + px(14.0);
+    let badge_h = small_h + px(4.0);
+    let heading_h = font_text_height(st.sf_heading) + px(2.0);
+
+    // 探测系统下拉框「闭合高度」（随字体/DPI 变化）作为行高基准，修正行间距。
+    let probe = child(
+        hwnd, w!("COMBOBOX"), "",
+        WS_TABSTOP.0 | CBS_DROPDOWNLIST | CBS_HASSTRINGS,
+        -400, -400, combo_sw, px(200.0), 9990, nf,
+    );
+    let mut pr = RECT::default();
+    let _ = GetWindowRect(probe, &mut pr);
+    let combo_h = (pr.bottom - pr.top).max(th + px(6.0));
+    let _ = DestroyWindow(probe);
+
+    // ── 第一遍：固定客户区宽度，高度给上限，建立 Tab 与 display area ──
+    let client_w = px(500.0);
+    resize_settings_client(hwnd, client_w, px(560.0), s);
+    let mut cl = RECT::default();
+    let _ = GetClientRect(hwnd, &mut cl);
+    let win_w = cl.right;
+    let prov_h = cl.bottom;
+
+    let prov_tab_h = prov_h - 2 * margin - btn_h - margin;
+    let tab = child(
+        hwnd, w!("SysTabControl32"), "", WS_CLIPSIBLINGS.0,
+        margin, margin, win_w - 2 * margin, prov_tab_h, ID_TAB, nf,
     );
     st.tab = tab;
     if st.theme.dark {
         apply_control_theme(tab, true);
-        // Tab 控件自身的页面主体在暗色主题下仍画成浅色，故子类化其窗口过程，
-        // 在默认绘制前把客户区填成暗背景。
         let prev = SetWindowLongPtrW(tab, GWLP_WNDPROC, tab_dark_wndproc as *const () as isize);
         SetWindowLongPtrW(tab, GWLP_USERDATA, prev);
         let hwnd_ptr = GetWindowLongPtrW(hwnd, GWLP_USERDATA);
-        // 把 UiState 指针挂到 tab 的属性上，供子类过程取主题画刷。
         let _ = SetPropW(tab, w!("ChatputState"), HANDLE(hwnd_ptr as *mut c_void));
     }
-    // 为设置窗口打开 Tab 主题，供 WM_CTLCOLOR 填充控件背景。
     st.tab_theme = OpenThemeData(hwnd, w!("TAB"));
-    let host = hwnd; // 表单控件的父窗口（设置窗口）。
+    let host = hwnd;
     tab_insert(tab, 0, &localization::t("通用", "General"));
-    tab_insert(tab, 1, &localization::t("内置服务", "Built-in"));
-    tab_insert(tab, 2, &localization::t("外部服务", "External"));
-    tab_insert(tab, 3, &localization::t("日志", "Logs"));
+    tab_insert(tab, 1, &localization::t("远程桌面", "Screen"));
+    tab_insert(tab, 2, &localization::t("内置服务", "Built-in"));
+    tab_insert(tab, 3, &localization::t("外部服务", "External"));
+    tab_insert(tab, 4, &localization::t("日志", "Logs"));
 
-    // 内容区原点（Tab 页内）。
-    let ox = 28;
-    let lw = 88; // 标签宽。
-    let cx = ox + lw + 8;
-    let cw = 320;
-    let lf = st.font_label; // 字段标签（小）。
-    let sf = st.font_small; // 描述/说明（更小）。
+    // 用 TCM_ADJUSTRECT 取 Tab 真实 display area（含系统内部边框，DPI 安全）。
+    let mut tab_wr = RECT::default();
+    let _ = GetWindowRect(st.tab, &mut tab_wr);
+    let mut parent_pt = POINT { x: 0, y: 0 };
+    let _ = ClientToScreen(host, &mut parent_pt);
+    tab_wr.left -= parent_pt.x;
+    tab_wr.top -= parent_pt.y;
+    tab_wr.right -= parent_pt.x;
+    tab_wr.bottom -= parent_pt.y;
+    let mut display_rc = tab_wr;
+    SendMessageW(st.tab, TCM_ADJUSTRECT, WPARAM(0), LPARAM(&mut display_rc as *mut RECT as isize));
 
-    // —— 通用 ——
-    st.chk_launch = add_ctrl(
-        st, 0, host, w!("BUTTON"),
-        &localization::t("开机自动运行", "Launch at login"),
-        WS_TABSTOP.0 | BS_AUTOCHECKBOX, ox, 62, 240, 22, ID_CHK_LAUNCH, font,
+    let content_x = display_rc.left + pad;
+    let content_y = display_rc.top + pad;
+    let content_w = (display_rc.right - pad) - content_x;
+    let col_x = content_x + label_w + label_gap;
+    let ctrl_w = content_w - label_w - label_gap;
+    let header_w = content_w;
+    let lab_off_combo = ((combo_h - label_h) / 2).max(0);
+    let lab_off_edit = ((edit_h - label_h) / 2).max(0);
+
+    // ── 文案与动态描述高度（自动换行测量，适配字体/语言变化）──
+    use crate::app::settings::ScreenCodec;
+    let t = localization::t;
+    let gen_sub = t("语言与启动选项。", "Language and startup options.");
+    let transport_note_h = measure_text_height(sf, ctrl_w, &TransportMode::Webrtc.note())
+        .max(measure_text_height(sf, ctrl_w, &TransportMode::Websocket.note()));
+    let scr_sub = t(
+        "远程桌面的采集、编码与交互参数。",
+        "Capture, encoding and interaction settings for remote screen.",
     );
-    if st.settings.launch_at_login {
-        SendMessageW(st.chk_launch, BM_SETCHECK, WPARAM(1), LPARAM(0));
-    }
-    add_label(st, 0, host, ox, 104, lw, &localization::t("传输模式", "Transport"), lf);
-    st.cb_transport = add_combo(st, 0, host, cx, 100, cw, ID_CB_TRANSPORT, font);
+    let codec_note_h = [ScreenCodec::H264, ScreenCodec::Vp8, ScreenCodec::Vp9]
+        .iter()
+        .map(|c| measure_text_height(sf, ctrl_w, &c.note()))
+        .max()
+        .unwrap_or(small_h);
+    let res_note = t(
+        "缩小桌面图像以节省带宽，手机端自动上采样填满画面。",
+        "Downscales the desktop image to save bandwidth. The phone upscales to fill the view.",
+    );
+    let res_note_h = measure_text_height(sf, ctrl_w, &res_note);
+    let bi_sub = t(
+        "在本机运行信令服务器，手机与电脑处于同一局域网时使用。",
+        "Run the signaling server locally; use it when phone and PC are on the same LAN.",
+    );
+    let detected = network_info::primary_lan_ipv4()
+        .unwrap_or_else(|| t("未找到局域网地址", "no LAN address"));
+    let detected_text = t("自动探测：", "Detected: ") + &detected;
+    let detected_h = measure_text_height(sf, ctrl_w, &detected_text);
+    let ex_sub = t(
+        "连接已部署在公网的信令服务器，跨网络远程使用。",
+        "Connect to a signaling server on the public internet for remote use.",
+    );
+    let ext_note = t(
+        "二维码将广播此地址，供手机连接。",
+        "The QR code broadcasts this address for the phone.",
+    );
+    let ext_note_h = measure_text_height(sf, ctrl_w, &ext_note);
+
+    // ── 计算最高 tab 的内容高度，据此自适应客户区高度 ──
+    let hdr = |sub_h: i32| heading_h + px(4.0) + sub_h;
+    let gen_h = hdr(measure_text_height(sf, header_w, &gen_sub))
+        + header_gap
+        + (combo_h + row_gap) * 2
+        + (combo_h + note_gap + transport_note_h + row_gap)
+        + combo_h;
+    let scr_h = hdr(measure_text_height(sf, header_w, &scr_sub))
+        + header_gap
+        + (combo_h + note_gap + codec_note_h + row_gap)
+        + (combo_h + row_gap)
+        + (combo_h + note_gap + res_note_h + row_gap)
+        + (combo_h + row_gap)
+        + combo_h;
+    let bi_h = hdr(measure_text_height(sf, header_w, &bi_sub))
+        + header_gap
+        + (badge_h + row_gap)
+        + (edit_h + row_gap)
+        + (edit_h + note_gap + detected_h);
+    let ex_h = hdr(measure_text_height(sf, header_w, &ex_sub))
+        + header_gap
+        + (badge_h + row_gap)
+        + (edit_h + note_gap + ext_note_h);
+    let content_h = gen_h.max(scr_h).max(bi_h).max(ex_h);
+
+    // 按钮区位于 Tab 页内部底端（对齐 macOS：Spacer 将按钮顶到 tab 内容底部）。
+    let btn_strip = row_gap + btn_h;
+
+    // ── 第二遍：按内容收缩窗口，重排 Tab（按钮含在 Tab 页内）──
+    let tab_bottom = content_y + content_h + btn_strip + pad + px(4.0);
+    let tab_h = tab_bottom - margin;
+    let client_h = tab_bottom + margin;
+    resize_settings_client(hwnd, client_w, client_h, s);
+    let mut cl2 = RECT::default();
+    let _ = GetClientRect(hwnd, &mut cl2);
+    let win_w = cl2.right;
+    let _ = SetWindowPos(
+        st.tab, None, margin, margin, win_w - 2 * margin, tab_h,
+        SWP_NOZORDER | SWP_NOACTIVATE,
+    );
+    // Tab 页内的按钮基线与右边界（content 坐标系，位于 Tab 显示区内部）。
+    let btn_y = content_y + content_h + row_gap;
+    let content_right = content_x + content_w;
+
+    // ═══════════ 0. 通用 ═══════════
+    let mut y = content_y;
+    let gh = section_header(st, 0, host, content_x, y, header_w, &t("通用", "General"), &gen_sub);
+    y += gh + header_gap;
+
+    add_label(st, 0, host, content_x, y + lab_off_combo, label_w, &t("开机自动运行", "Launch at login"), lf);
+    st.chk_launch = add_ctrl(st, 0, host, w!("BUTTON"), "",
+        WS_TABSTOP.0 | BS_AUTOCHECKBOX, col_x, y, chk_w, combo_h, ID_CHK_LAUNCH, nf);
+    if st.settings.launch_at_login { SendMessageW(st.chk_launch, BM_SETCHECK, WPARAM(1), LPARAM(0)); }
+    y += combo_h + row_gap;
+
+    add_label(st, 0, host, content_x, y + lab_off_combo, label_w, &t("自动保存房间", "Auto-save room"), lf);
+    st.chk_auto_room = add_ctrl(st, 0, host, w!("BUTTON"), "",
+        WS_TABSTOP.0 | BS_AUTOCHECKBOX, col_x, y, chk_w, combo_h, ID_CHK_AUTO_ROOM, nf);
+    if st.settings.auto_save_room_id { SendMessageW(st.chk_auto_room, BM_SETCHECK, WPARAM(1), LPARAM(0)); }
+    y += combo_h + row_gap;
+
+    add_label(st, 0, host, content_x, y + lab_off_combo, label_w, &t("传输模式", "Transport"), lf);
+    st.cb_transport = add_combo(st, 0, host, col_x, y, ctrl_w, ID_CB_TRANSPORT, nf);
     combo_add(st.cb_transport, &TransportMode::Webrtc.label());
     combo_add(st.cb_transport, &TransportMode::Websocket.label());
     combo_set(st.cb_transport, if st.settings.transport == TransportMode::Websocket { 1 } else { 0 });
-    add_label_h(st, 0, host, cx, 132, cw, 34, &st.settings.transport.note(), sf);
+    add_label_h(st, 0, host, col_x, y + combo_h + note_gap, ctrl_w, transport_note_h, &st.settings.transport.note(), sf);
+    y += combo_h + note_gap + transport_note_h + row_gap;
 
-    add_label(st, 0, host, ox, 186, lw, &localization::t("语言", "Language"), lf);
-    st.cb_language = add_combo(st, 0, host, cx, 182, cw, ID_CB_LANGUAGE, font);
+    add_label(st, 0, host, content_x, y + lab_off_combo, label_w, &t("语言", "Language"), lf);
+    st.cb_language = add_combo(st, 0, host, col_x, y, ctrl_w, ID_CB_LANGUAGE, nf);
     combo_add(st.cb_language, &AppLanguage::System.label());
     combo_add(st.cb_language, &AppLanguage::Zh.label());
     combo_add(st.cb_language, &AppLanguage::En.label());
-    combo_set(st.cb_language, match st.settings.language {
-        AppLanguage::System => 0,
-        AppLanguage::Zh => 1,
-        AppLanguage::En => 2,
-    });
+    combo_set(st.cb_language, match st.settings.language { AppLanguage::System => 0, AppLanguage::Zh => 1, AppLanguage::En => 2 });
 
-    // —— 内置服务 ——
-    section_header(
-        st, 1, host, ox, cw + 40,
-        &localization::t("内置服务（局域网）", "Built-in (LAN)"),
-        &localization::t(
-            "在本机运行信令服务器，手机与电脑处于同一局域网时使用。",
-            "Run the signaling server locally; use it when phone and PC are on the same LAN.",
-        ),
-    );
-    add_mode_badge(st, 1, host, ox, 122, st.settings.mode == SignalingMode::BuiltIn);
-    add_label(st, 1, host, ox, 158, lw, &localization::t("监听端口", "Port"), lf);
-    st.ed_port = add_edit(st, 1, host, cx, 156, 120, ID_ED_PORT, font);
+    // ═══════════ 1. 远程桌面 ═══════════
+    let scr = 1;
+    let mut y = content_y;
+    let sh = section_header(st, scr, host, content_x, y, header_w, &t("远程桌面", "Screen"), &scr_sub);
+    y += sh + header_gap;
+
+    add_label(st, scr, host, content_x, y + lab_off_combo, label_w, &t("优先编码", "Preferred codec"), lf);
+    st.cb_codec = add_combo(st, scr, host, col_x, y, combo_sw, ID_CB_CODEC, nf);
+    let codec_items = [ScreenCodec::H264, ScreenCodec::Vp8, ScreenCodec::Vp9];
+    let mut c = 0; for (i, cd) in codec_items.iter().enumerate() { combo_add(st.cb_codec, &cd.label()); if (st.settings.screen_codec as usize) == (*cd as usize) { c = i; } }
+    combo_set(st.cb_codec, c);
+    add_label_h(st, scr, host, col_x, y + combo_h + note_gap, ctrl_w, codec_note_h, &st.settings.screen_codec.note(), sf);
+    y += combo_h + note_gap + codec_note_h + row_gap;
+
+    add_label(st, scr, host, content_x, y + lab_off_combo, label_w, &t("采集帧率", "FPS"), lf);
+    st.cb_fps = add_combo(st, scr, host, col_x, y, combo_sw, ID_CB_FPS, nf);
+    let fps_items = [crate::app::settings::ScreenFPS::Fps12, crate::app::settings::ScreenFPS::Fps18, crate::app::settings::ScreenFPS::Fps24, crate::app::settings::ScreenFPS::Fps30];
+    let mut c = 1; for (i, fp) in fps_items.iter().enumerate() { combo_add(st.cb_fps, &fp.label()); if st.settings.screen_fps.value() == fp.value() { c = i; } }
+    combo_set(st.cb_fps, c);
+    y += combo_h + row_gap;
+
+    add_label(st, scr, host, content_x, y + lab_off_combo, label_w, &t("输出分辨率", "Resolution"), lf);
+    st.cb_scale = add_combo(st, scr, host, col_x, y, combo_sw, ID_CB_SCALE, nf);
+    let scale_items = [crate::app::settings::ScreenScale::P100, crate::app::settings::ScreenScale::P80, crate::app::settings::ScreenScale::P75, crate::app::settings::ScreenScale::P60, crate::app::settings::ScreenScale::P50];
+    let mut c = 0; for (i, sc) in scale_items.iter().enumerate() { combo_add(st.cb_scale, &sc.label()); if (st.settings.screen_scale as usize) == (*sc as usize) { c = i; } }
+    combo_set(st.cb_scale, c);
+    add_label_h(st, scr, host, col_x, y + combo_h + note_gap, ctrl_w, res_note_h, &res_note, sf);
+    y += combo_h + note_gap + res_note_h + row_gap;
+
+    add_label(st, scr, host, content_x, y + lab_off_combo, label_w, &t("画质偏好", "Quality"), lf);
+    st.cb_quality = add_combo(st, scr, host, col_x, y, qual_w, ID_CB_QUALITY, nf);
+    let qual_items = [crate::app::settings::ScreenQuality::Disabled, crate::app::settings::ScreenQuality::MaintainResolution, crate::app::settings::ScreenQuality::Balanced];
+    let mut c = 0; for (i, q) in qual_items.iter().enumerate() { combo_add(st.cb_quality, &q.label()); if (st.settings.screen_quality as usize) == (*q as usize) { c = i; } }
+    combo_set(st.cb_quality, c);
+    y += combo_h + row_gap;
+
+    add_label(st, scr, host, content_x, y + lab_off_combo, label_w, &t("固定码率", "Fixed bitrate"), lf);
+    st.chk_bitrate = add_ctrl(st, scr, host, w!("BUTTON"), "",
+        WS_TABSTOP.0 | BS_AUTOCHECKBOX, col_x, y, chk_w, combo_h, ID_CHK_BITRATE, nf);
+    if st.settings.disable_dynamic_bitrate { SendMessageW(st.chk_bitrate, BM_SETCHECK, WPARAM(1), LPARAM(0)); }
+    add_label_h(st, scr, host, col_x + chk_w + note_gap, y + (combo_h - small_h) / 2, ctrl_w - chk_w - note_gap, small_h,
+        &t("关闭自适应，首帧即清晰", "Disable adaptive bitrate for sharp first frames."), sf);
+
+    // ═══════════ 2. 内置服务 ═══════════
+    let mut y = content_y;
+    let bh = section_header(st, 2, host, content_x, y, header_w, &t("内置服务（局域网）", "Built-in (LAN)"), &bi_sub);
+    y += bh + header_gap;
+    add_mode_badge(st, 2, host, content_x, y, st.settings.mode == SignalingMode::BuiltIn);
+    y += badge_h + row_gap;
+
+    add_label(st, 2, host, content_x, y + lab_off_edit, label_w, &t("监听端口", "Port"), lf);
+    st.ed_port = add_edit(st, 2, host, col_x, y, edit_w, ID_ED_PORT, nf);
     set_text(st.ed_port, &st.settings.listen_port.to_string());
-    add_label(st, 1, host, ox, 192, lw, &localization::t("对外 IP", "Host IP"), lf);
-    st.ed_ip = add_edit(st, 1, host, cx, 190, cw, ID_ED_IP, font);
-    set_cue(st.ed_ip, &localization::t("留空自动探测", "Auto-detect if empty"));
-    set_text(st.ed_ip, &st.settings.ip_override);
-    let detected = network_info::primary_lan_ipv4()
-        .unwrap_or_else(|| localization::t("未找到局域网地址", "no LAN address"));
-    add_label(st, 1, host, cx, 220, cw, &(localization::t("自动探测：", "Detected: ") + &detected), sf);
-    add_ctrl(
-        st, 1, host, w!("BUTTON"),
-        &localization::t("保存并应用", "Save & Apply"),
-        WS_TABSTOP.0, SET_W - 60 - 150, SET_H - 96, 150, 30, ID_BTN_SAVE_BUILTIN, font,
-    );
+    y += edit_h + row_gap;
 
-    // —— 外部服务 ——
-    section_header(
-        st, 2, host, ox, cw + 40,
-        &localization::t("外部服务（公网远程）", "External (remote)"),
-        &localization::t(
-            "连接已部署在公网的信令服务器，跨网络远程使用。",
-            "Connect to a signaling server on the public internet for remote use.",
-        ),
-    );
-    add_mode_badge(st, 2, host, ox, 122, st.settings.mode == SignalingMode::External);
-    add_label(st, 2, host, ox, 158, lw, &localization::t("信令地址", "Address"), lf);
-    st.ed_url = add_edit(st, 2, host, cx, 156, cw, ID_ED_URL, font);
+    add_label(st, 2, host, content_x, y + lab_off_edit, label_w, &t("对外 IP", "Host IP"), lf);
+    st.ed_ip = add_edit(st, 2, host, col_x, y, ctrl_w, ID_ED_IP, nf);
+    set_cue(st.ed_ip, &t("留空自动探测", "Auto-detect if empty"));
+    set_text(st.ed_ip, &st.settings.ip_override);
+    y += edit_h + note_gap;
+    add_label_h(st, 2, host, col_x, y, ctrl_w, detected_h, &detected_text, sf);
+
+    // ═══════════ 3. 外部服务 ═══════════
+    let mut y = content_y;
+    let eh2 = section_header(st, 3, host, content_x, y, header_w, &t("外部服务（公网远程）", "External (remote)"), &ex_sub);
+    y += eh2 + header_gap;
+    add_mode_badge(st, 3, host, content_x, y, st.settings.mode == SignalingMode::External);
+    y += badge_h + row_gap;
+
+    add_label(st, 3, host, content_x, y + lab_off_edit, label_w, &t("信令地址", "Address"), lf);
+    st.ed_url = add_edit(st, 3, host, col_x, y, ctrl_w, ID_ED_URL, nf);
     set_cue(st.ed_url, "ws://example.com:8080");
     set_text(st.ed_url, &st.settings.external_url);
-    add_label(
-        st, 2, host, cx, 186, cw,
-        &localization::t("二维码将广播此地址，供手机连接。", "The QR code broadcasts this address for the phone."),
-        sf,
-    );
-    // 地址为空时仅「保存」（回退内置，不应用外部）；非空时「保存并应用」。
-    st.btn_save_external = add_ctrl(
-        st, 2, host, w!("BUTTON"),
-        &external_save_label(&st.settings.external_url),
-        WS_TABSTOP.0, SET_W - 60 - 150, SET_H - 96, 150, 30, ID_BTN_SAVE_EXTERNAL, font,
-    );
+    y += edit_h + note_gap;
+    add_label_h(st, 3, host, col_x, y, ctrl_w, ext_note_h, &ext_note, sf);
 
-    // —— 日志 ——
-    let log_x = ox;
-    let log_w = SET_W - 32 - ox - 8;
-    let sb_w = 12;
-    st.ed_log = add_ctrl(
-        st, 3, host, w!("EDIT"), "",
-        WS_TABSTOP.0 | WS_BORDER.0 | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL,
-        log_x, 56, log_w - sb_w, 250, ID_ED_LOG, st.font_small,
-    );
-    // 自绘暗色滚动条紧贴日志框右侧（仅暗色启用；浅色仍用原生但此处统一自绘以保持一致）。
-    let sb = child(host, LOG_SB_CLASS, "", WS_CLIPSIBLINGS.0, log_x + log_w - sb_w, 56, sb_w, 250, 0, st.font_small);
-    let host_ptr = GetWindowLongPtrW(host, GWLP_USERDATA);
-    let _ = SetPropW(sb, w!("ChatputState"), HANDLE(host_ptr as *mut c_void));
-    st.log_sb = sb;
-    st.tab_ctrls.push((3, sb));
-    // 子类化日志框：滚轮滚动并同步自绘滚动条（原生滚动条已移除）。
-    let eprev = SetWindowLongPtrW(st.ed_log, GWLP_WNDPROC, log_edit_wndproc as *const () as isize);
-    SetWindowLongPtrW(st.ed_log, GWLP_USERDATA, eprev);
-    let _ = SetPropW(st.ed_log, w!("ChatputState"), HANDLE(host_ptr as *mut c_void));
-    let _ = SetPropW(st.ed_log, w!("ChatputLogSb"), HANDLE(sb.0));
-    add_ctrl(
-        st, 3, host, w!("BUTTON"),
-        &localization::t("清空", "Clear"),
-        WS_TABSTOP.0, SET_W - 60 - 100, SET_H - 96, 100, 30, ID_BTN_CLEAR, font,
-    );
+    // ═══════════ Tab 页内底部按钮区（对齐 macOS saveBar，位于 Tab 区域内）═══════════
+    add_ctrl(st, 2, host, w!("BUTTON"), &t("保存并应用", "Save & Apply"),
+        WS_TABSTOP.0, content_right - btn_w, btn_y, btn_w, btn_h, ID_BTN_SAVE_BUILTIN, nf);
+    st.btn_save_external = add_ctrl(st, 3, host, w!("BUTTON"), &external_save_label(&st.settings.external_url),
+        WS_TABSTOP.0, content_right - btn_w, btn_y, btn_w, btn_h, ID_BTN_SAVE_EXTERNAL, nf);
+    add_ctrl(st, 4, host, w!("BUTTON"), &t("清空", "Clear"),
+        WS_TABSTOP.0, content_right - clr_w, btn_y, clr_w, btn_h, ID_BTN_CLEAR, nf);
+
+    // ═══════════ 4. 日志 ═══════════
+    let log_x = content_x;
+    let log_y = content_y;
+    let log_w = content_w;
+    let log_bottom = btn_y - row_gap;
+    let log_h = (log_bottom - log_y).max(px(60.0));
+    st.ed_log = child(host, w!("EDIT"), "",
+        WS_TABSTOP.0 | WS_BORDER.0 | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL.0,
+        log_x, log_y, log_w, log_h, ID_ED_LOG, sf);
+    if st.theme.dark { allow_dark_for_window(st.ed_log, true); }
+    st.tab_ctrls.push((4, st.ed_log));
+    st.log_sb = HWND(null_mut());
     refresh_log(st);
 
     apply_tab_visibility(st, 0);
 }
 
+
 unsafe fn add_mode_badge(st: &mut UiState, tab: i32, parent: HWND, x: i32, y: i32, active: bool) {
+    let s = st.set_scale;
+    let off2 = (2.0 * s) as i32;
+    let d14 = (14.0 * s) as i32;
+    let gap18 = (18.0 * s) as i32;
     // 圆点：生效=绿色，未启用=灰色（对齐 macOS modeBadge）。
     let dot_color = if active { STATE_CONNECTED } else { st.theme.badge_idle };
-    let dot = add_ctrl(st, tab, parent, w!("STATIC"), "\u{E91F}", SS_LEFT, x, y + 2, 14, 14, 0, st.font_dot);
+    let dot = add_ctrl(st, tab, parent, w!("STATIC"), "\u{E91F}", SS_LEFT, x, y + off2, d14, d14, 0, st.sf_dot);
     st.colored_statics.push((dot, dot_color));
     let text = if active {
         localization::t("当前生效模式", "Active mode")
     } else {
         localization::t("未启用（保存后切换到此模式）", "Inactive (save to switch here)")
     };
-    add_label(st, tab, parent, x + 18, y, 360, &text, st.font_small);
+    add_label(st, tab, parent, x + gap18, y, (360.0 * s) as i32, &text, st.sf_small);
 }
 
 unsafe fn apply_tab_visibility(st: &mut UiState, idx: i32) {
@@ -2009,12 +2315,12 @@ unsafe fn apply_tab_visibility(st: &mut UiState, idx: i32) {
     for (t, h) in &st.tab_ctrls {
         let _ = ShowWindow(*h, if *t == idx { SW_SHOW } else { SW_HIDE });
     }
-    if idx == 3 {
+    if idx == 4 {
         refresh_log(st);
     }
 }
 
-unsafe fn refresh_log(st: &UiState) {
+unsafe fn refresh_log(st: &mut UiState) {
     if st.ed_log.is_invalid() {
         return;
     }
@@ -2030,7 +2336,7 @@ unsafe fn refresh_log(st: &UiState) {
     let n = text.encode_utf16().count() as i32;
     SendMessageW(st.ed_log, EM_SETSEL, WPARAM(n as usize), LPARAM(n as isize));
     SendMessageW(st.ed_log, EM_SCROLLCARET, WPARAM(0), LPARAM(0));
-    // 同步自绘滚动条。
+
     if !st.log_sb.is_invalid() {
         let _ = InvalidateRect(st.log_sb, None, FALSE);
     }
@@ -2070,6 +2376,60 @@ unsafe fn handle_settings_command(st: &mut UiState, id: usize, code: u16) {
             // 实时根据地址是否为空切换外部保存按钮文案。
             let url = AppSettings::normalize_external_url(read_text(st.ed_url).trim());
             set_text(st.btn_save_external, &external_save_label(&url));
+        }
+        ID_CHK_AUTO_ROOM if code == BN_CLICKED => {
+            let on = SendMessageW(st.chk_auto_room, BM_GETCHECK, WPARAM(0), LPARAM(0)).0 == 1;
+            st.settings.auto_save_room_id = on;
+            st.settings.save();
+        }
+        // 画面设置（即时保存，不重启）
+        ID_CB_FPS if code == CBN_SELCHANGE => {
+            use crate::app::settings::ScreenFPS;
+            st.settings.screen_fps = match combo_get(st.cb_fps) {
+                0 => ScreenFPS::Fps12,
+                1 => ScreenFPS::Fps18,
+                2 => ScreenFPS::Fps24,
+                3 => ScreenFPS::Fps30,
+                _ => ScreenFPS::Fps18,
+            };
+            st.settings.save();
+        }
+        ID_CB_CODEC if code == CBN_SELCHANGE => {
+            use crate::app::settings::ScreenCodec;
+            st.settings.screen_codec = match combo_get(st.cb_codec) {
+                0 => ScreenCodec::H264,
+                1 => ScreenCodec::Vp8,
+                2 => ScreenCodec::Vp9,
+                _ => ScreenCodec::H264,
+            };
+            st.settings.save();
+        }
+        ID_CB_SCALE if code == CBN_SELCHANGE => {
+            use crate::app::settings::ScreenScale;
+            st.settings.screen_scale = match combo_get(st.cb_scale) {
+                0 => ScreenScale::P100,
+                1 => ScreenScale::P80,
+                2 => ScreenScale::P75,
+                3 => ScreenScale::P60,
+                4 => ScreenScale::P50,
+                _ => ScreenScale::P100,
+            };
+            st.settings.save();
+        }
+        ID_CB_QUALITY if code == CBN_SELCHANGE => {
+            use crate::app::settings::ScreenQuality;
+            st.settings.screen_quality = match combo_get(st.cb_quality) {
+                0 => ScreenQuality::Disabled,
+                1 => ScreenQuality::MaintainResolution,
+                2 => ScreenQuality::Balanced,
+                _ => ScreenQuality::Disabled,
+            };
+            st.settings.save();
+        }
+        ID_CHK_BITRATE if code == BN_CLICKED => {
+            let on = SendMessageW(st.chk_bitrate, BM_GETCHECK, WPARAM(0), LPARAM(0)).0 == 1;
+            st.settings.disable_dynamic_bitrate = on;
+            st.settings.save();
         }
         ID_BTN_CLEAR if code == BN_CLICKED => {
             st.state.clear_log();
@@ -2192,7 +2552,8 @@ unsafe fn add_label(
     text: &str,
     font: HFONT,
 ) -> HWND {
-    add_ctrl(st, tab, parent, w!("STATIC"), text, SS_LEFT, x, y, w, 20, 0, font)
+    let lh = font_text_height(font) + (4.0 * st.set_scale) as i32;
+    add_ctrl(st, tab, parent, w!("STATIC"), text, SS_LEFT, x, y, w, lh, 0, font)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2211,36 +2572,41 @@ unsafe fn add_label_h(
 }
 
 /// Tab 页首：标题（大字体粗体）+ 描述（小字体），对齐 macOS sectionHeader。
-unsafe fn section_header(st: &mut UiState, tab: i32, parent: HWND, x: i32, w: i32, title: &str, subtitle: &str) {
-    add_label_h(st, tab, parent, x, 52, w, 24, title, st.font_heading);
-    add_label_h(st, tab, parent, x, 78, w, 36, subtitle, st.font_small);
+/// 返回区块总高度（标题 + 间距 + 自动换行的描述）。
+unsafe fn section_header(st: &mut UiState, tab: i32, parent: HWND, x: i32, y: i32, w: i32, title: &str, subtitle: &str) -> i32 {
+    let s = st.set_scale;
+    let title_h = font_text_height(st.sf_heading) + (2.0 * s) as i32;
+    let gap = (4.0 * s) as i32;
+    let sub_h = measure_text_height(st.sf_small, w, subtitle);
+    add_label_h(st, tab, parent, x, y, w, title_h, title, st.sf_heading);
+    add_label_h(st, tab, parent, x, y + title_h + gap, w, sub_h, subtitle, st.sf_small);
+    title_h + gap + sub_h
 }
 
 #[allow(clippy::too_many_arguments)]
 unsafe fn add_combo(st: &mut UiState, tab: i32, parent: HWND, x: i32, y: i32, w: i32, id: usize, font: HFONT) -> HWND {
+    let drop_h = (220.0 * st.set_scale) as i32;
     let h = add_ctrl(
         st, tab, parent, w!("COMBOBOX"), "",
         WS_TABSTOP.0 | WS_VSCROLL.0 | CBS_DROPDOWNLIST | CBS_HASSTRINGS,
-        x, y, w, 220, id, font,
+        x, y, w, drop_h, id, font,
     );
     if st.theme.dark {
         // 下拉框需要 CFD（Combobox Flat Dropdown）主题，列表与按钮才会变暗。
         allow_dark_for_window(h, true);
         let _ = SetWindowTheme(h, w!("DarkMode_CFD"), None);
-    } else {
-        // 浅色：清除任何暗色覆盖，恢复系统默认 combobox 主题（边框/下拉箭头/列表）。
-        allow_dark_for_window(h, false);
-        let _ = SetWindowTheme(h, None, None);
     }
+    // 浅色模式不调 SetWindowTheme，保持系统默认主题（含可见边框）。
     h
 }
 
 #[allow(clippy::too_many_arguments)]
 unsafe fn add_edit(st: &mut UiState, tab: i32, parent: HWND, x: i32, y: i32, w: i32, id: usize, font: HFONT) -> HWND {
+    let eh = font_text_height(font) + (8.0 * st.set_scale) as i32;
     add_ctrl(
         st, tab, parent, w!("EDIT"), "",
         WS_TABSTOP.0 | WS_BORDER.0 | ES_AUTOHSCROLL,
-        x, y, w, 24, id, font,
+        x, y, w, eh, id, font,
     )
 }
 
@@ -2318,6 +2684,67 @@ unsafe fn make_icon_font(height: i32) -> HFONT {
         0,
         w!("Segoe MDL2 Assets"),
     )
+}
+
+/// 销毁设置窗口专属字体。
+unsafe fn destroy_set_fonts(st: &mut UiState) {
+    for f in [st.sf_heading, st.sf_normal, st.sf_label, st.sf_small, st.sf_dot] {
+        if !f.is_invalid() {
+            let _ = DeleteObject(HGDIOBJ(f.0));
+        }
+    }
+    st.sf_heading = HFONT(null_mut());
+    st.sf_normal = HFONT(null_mut());
+    st.sf_label = HFONT(null_mut());
+    st.sf_small = HFONT(null_mut());
+    st.sf_dot = HFONT(null_mut());
+}
+
+/// 按设置窗口当前 DPI 重建专属字体（独立于 popup，避免相互影响）。
+unsafe fn ensure_set_fonts(st: &mut UiState, scale: f64) {
+    destroy_set_fonts(st);
+    st.set_scale = scale;
+    st.sf_heading = make_font(-(15.0 * scale) as i32, 700);
+    st.sf_normal = make_font(-(14.0 * scale) as i32, 400);
+    st.sf_label = make_font(-(13.5 * scale) as i32, 400);
+    st.sf_small = make_font(-(12.0 * scale) as i32, 400);
+    st.sf_dot = make_icon_font(-(11.0 * scale) as i32);
+}
+
+/// 字体单行高度（tmHeight + tmExternalLeading），用于按字体动态推导控件高度。
+unsafe fn font_text_height(font: HFONT) -> i32 {
+    let hdc = GetDC(None);
+    let old = SelectObject(hdc, HGDIOBJ(font.0));
+    let mut tm = TEXTMETRICW::default();
+    let _ = GetTextMetricsW(hdc, &mut tm);
+    SelectObject(hdc, old);
+    ReleaseDC(None, hdc);
+    (tm.tmHeight + tm.tmExternalLeading).max(1)
+}
+
+/// 给定字体与可用宽度，自动换行测量文本绘制高度（动态适配字体/换行变化）。
+unsafe fn measure_text_height(font: HFONT, width: i32, text: &str) -> i32 {
+    if text.is_empty() {
+        return 0;
+    }
+    let hdc = GetDC(None);
+    let old = SelectObject(hdc, HGDIOBJ(font.0));
+    let mut wide: Vec<u16> = text.encode_utf16().collect();
+    let mut r = RECT { left: 0, top: 0, right: width.max(1), bottom: 0 };
+    DrawTextW(hdc, &mut wide, &mut r, DT_CALCRECT | DT_WORDBREAK | DT_LEFT);
+    SelectObject(hdc, old);
+    ReleaseDC(None, hdc);
+    (r.bottom - r.top).max(1)
+}
+
+/// 指定窗口所在显示器的 DPI 缩放系数（dpi / 96），用于 Per-Monitor 动态适配。
+unsafe fn dpi_for_window(hwnd: HWND) -> f64 {
+    let dpi = GetDpiForWindow(hwnd);
+    if dpi == 0 {
+        get_dpi_scale()
+    } else {
+        (dpi as f64 / 96.0).max(1.0)
+    }
 }
 
 unsafe fn text_out(hdc: HDC, font: HFONT, color: COLORREF, x: i32, y: i32, text: &str) {

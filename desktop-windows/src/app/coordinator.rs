@@ -1,15 +1,18 @@
-//! 顶层协调器：在独立 tokio 运行时中编排信令、WebRTC、内置服务器、焦点监控与文字注入。
+//! 顶层协调器（2.0）：在独立 tokio 运行时中编排信令、WebRTC、
+//! 内置服务器、焦点监控、文字注入、远程窗口采集与触控转鼠标。
 //! 对标 macOS 的 Coordinator.swift。UI 通过命令通道驱动它，它回写 AppState。
 
 use crate::app::app_state::AppState;
 use crate::app::settings::{AppSettings, SignalingMode, TransportMode};
 use crate::core::focus_monitor::{FocusEvent, FocusMonitor, FocusSession};
 use crate::core::localization::t;
+use crate::core::pointer_injector::PointerInjector;
 use crate::core::qrcode_gen;
 use crate::core::signaling_client::{SignalingClient, SignalingEvent};
 use crate::core::signaling_server::{ServerEvent, SignalingServer};
 use crate::core::text_injector::{Action, TextInjector};
 use crate::core::webrtc_manager::{WebRtcEvent, WebRtcManager};
+use crate::core::window_capturer::{CapturerEvent, WindowCapturer};
 use crate::core::wire;
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
@@ -30,17 +33,31 @@ pub struct Coordinator {
     webrtc: WebRtcManager,
     injector: TextInjector,
     focus: FocusMonitor,
+    capturer: WindowCapturer,
+    pointer: PointerInjector,
 
     sig_rx: Option<mpsc::UnboundedReceiver<SignalingEvent>>,
     srv_rx: Option<mpsc::UnboundedReceiver<ServerEvent>>,
     rtc_rx: Option<mpsc::UnboundedReceiver<WebRtcEvent>>,
     focus_rx: Option<mpsc::UnboundedReceiver<FocusEvent>>,
+    capt_rx: Option<mpsc::UnboundedReceiver<CapturerEvent>>,
 
     room_id: String,
     token: String,
     transport: TransportMode,
     device_name: String,
     peer_present: bool,
+
+    // 远程窗口画面（2.0）
+    screen_session_id: String,
+    last_applied_viewport: (i32, i32, i32, i32), // x, y, w, h
+    pending_screen_session: Option<(String, i32, i32)>, // (id, vpW, vpH)
+    /// 网络变化后是否需要提示重新扫码。
+    should_prompt_rescan: bool,
+
+    // 网络变化检测
+    last_network_ip: String,
+    network_check_counter: u64,
 }
 
 impl Coordinator {
@@ -81,6 +98,18 @@ impl Coordinator {
             });
         }
 
+        // 窗口采集器用 std mpsc，桥接到 tokio。
+        let (capt_tx, capt_rx) = mpsc::unbounded_channel::<CapturerEvent>();
+        let mut capturer = WindowCapturer::new();
+        let capt_std_rx = capturer.take_receiver();
+        std::thread::spawn(move || {
+            while let Ok(ev) = capt_std_rx.recv() {
+                if capt_tx.send(ev).is_err() {
+                    break;
+                }
+            }
+        });
+
         let transport = settings.transport;
         Coordinator {
             state,
@@ -90,15 +119,24 @@ impl Coordinator {
             webrtc: WebRtcManager::new(rtc_tx),
             injector: TextInjector::new(),
             focus,
+            capturer,
+            pointer: PointerInjector::new(),
             sig_rx: Some(sig_rx),
             srv_rx: Some(srv_rx),
             rtc_rx: Some(rtc_rx),
             focus_rx: Some(focus_rx),
+            capt_rx: Some(capt_rx),
             room_id: String::new(),
             token: String::new(),
             transport,
             device_name: device_name(),
             peer_present: false,
+            screen_session_id: String::new(),
+            last_applied_viewport: (0, 0, 0, 0),
+            pending_screen_session: None,
+            should_prompt_rescan: false,
+            last_network_ip: String::new(),
+            network_check_counter: 0,
         }
     }
 
@@ -107,6 +145,7 @@ impl Coordinator {
         let mut srv_rx = self.srv_rx.take().unwrap();
         let mut rtc_rx = self.rtc_rx.take().unwrap();
         let mut focus_rx = self.focus_rx.take().unwrap();
+        let mut capt_rx = self.capt_rx.take().unwrap();
 
         // 默认自动启动服务。
         self.start_service().await;
@@ -128,6 +167,13 @@ impl Coordinator {
                 Some(ev) = srv_rx.recv() => self.on_server(ev),
                 Some(ev) = rtc_rx.recv() => self.on_webrtc(ev).await,
                 Some(ev) = focus_rx.recv() => self.on_focus(ev).await,
+                Some(ev) = capt_rx.recv() => self.on_capturer(ev).await,
+            }
+
+            // 周期性网络变化检测（每 ~2 秒随事件循环触发）。
+            self.network_check_counter += 1;
+            if self.network_check_counter % 128 == 0 {
+                self.check_network_change();
             }
         }
     }
@@ -147,10 +193,27 @@ impl Coordinator {
     }
 
     async fn stop_service(&mut self) {
+        // 保存当前屏幕会话，供重连后自动恢复（对齐 macOS restart()）。
+        if !self.screen_session_id.is_empty() {
+            let vp_w = self.last_applied_viewport.2.max(1);
+            let vp_h = self.last_applied_viewport.3.max(1);
+            self.pending_screen_session = Some((self.screen_session_id.clone(), vp_w, vp_h));
+            self.state.log(format!(
+                "[screen] 保存 pending session: {} ({}x{})",
+                self.screen_session_id, vp_w, vp_h
+            ));
+        }
+        self.stop_screen_capture("");
         self.signaling.close().await;
         self.webrtc.close().await;
         self.server.stop().await;
         self.peer_present = false;
+        if !self.settings.auto_save_room_id {
+            self.settings.saved_room_id = String::new();
+            self.settings.saved_token = String::new();
+        }
+        self.room_id.clear();
+        self.token.clear();
         self.state.set_service_active(false);
         self.state.set_server_state(false, 0);
         self.state.clear_room();
@@ -173,9 +236,26 @@ impl Coordinator {
     async fn apply_config(&mut self, settings: AppSettings) {
         settings.save();
         self.settings = settings;
-        // 重启链路使新配置生效。
         self.stop_service().await;
         self.start_service().await;
+    }
+
+    // ---- 网络变化监听 ----
+
+    fn check_network_change(&mut self) {
+        let current_ip = crate::core::network_info::primary_lan_ipv4().unwrap_or_default();
+        if self.last_network_ip.is_empty() {
+            self.last_network_ip = current_ip;
+            return;
+        }
+        if current_ip != self.last_network_ip && !current_ip.is_empty() {
+            self.state.log(format!(
+                "network changed: {} -> {}",
+                self.last_network_ip, current_ip
+            ));
+            self.last_network_ip = current_ip;
+            self.should_prompt_rescan = true;
+        }
     }
 
     // ---- 信令事件 ----
@@ -184,15 +264,35 @@ impl Coordinator {
         match ev {
             SignalingEvent::Open => {
                 self.state.log(t("信令已连接", "Signaling connected"));
-                self.signaling
-                    .send(&json!({ wire::key::TYPE: wire::signal::CREATE_ROOM }))
-                    .await;
+                // 若有保存的房间号，尝试恢复；否则创建新房间。
+                if self.settings.auto_save_room_id
+                    && !self.settings.saved_room_id.is_empty()
+                    && !self.settings.saved_token.is_empty()
+                {
+                    self.state.set_status("已连接信令，恢复房间…", "Connected, restoring room…", false);
+                    self.signaling
+                        .send(&json!({
+                            wire::key::TYPE: wire::signal::RESTORE_ROOM,
+                            "roomId": self.settings.saved_room_id,
+                            "token": self.settings.saved_token,
+                        }))
+                        .await;
+                } else {
+                    self.state.set_status("已连接信令，创建房间…", "Connected, creating room…", false);
+                    self.signaling
+                        .send(&json!({ wire::key::TYPE: wire::signal::CREATE_ROOM }))
+                        .await;
+                }
             }
             SignalingEvent::Message(v) => self.handle_signaling_message(v).await,
             SignalingEvent::Close => {
                 self.state
                     .set_status("信令已断开", "Signaling disconnected", false);
                 self.state.set_connected_device("");
+                // 自动重连。
+                let connect_url = self.settings.host_connect_url();
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                self.signaling.connect(connect_url).await;
             }
         }
     }
@@ -204,7 +304,18 @@ impl Coordinator {
             t0 if t0 == wire::signal::ROOM_CREATED => {
                 self.room_id = msg.get("roomId").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 self.token = msg.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+                // 持久化房间号。
+                if self.settings.auto_save_room_id {
+                    self.settings.saved_room_id = self.room_id.clone();
+                    self.settings.saved_token = self.token.clone();
+                    self.settings.save();
+                }
+
                 let advertised_url = self.settings.advertised_url();
+                let refreshed = self.should_prompt_rescan;
+                self.should_prompt_rescan = false;
+
                 self.state.log(format!("{}: {}", t("二维码地址", "QR URL"), advertised_url));
                 if advertised_url.contains("127.0.0.1") {
                     self.state.log(t(
@@ -226,13 +337,16 @@ impl Coordinator {
                 let qr = qrcode_gen::generate(&payload.to_string(), 6, 2);
                 self.state
                     .set_room(self.room_id.clone(), advertised_url, qr);
-                self.state
-                    .set_status("等待手机扫码…", "Waiting for phone…", false);
+                if refreshed {
+                    self.state.set_status("二维码已刷新，请重新扫码", "QR code refreshed, please scan again", false);
+                } else {
+                    self.state
+                        .set_status("等待手机扫码…", "Waiting for phone…", false);
+                }
             }
 
             t0 if t0 == wire::signal::PEER_JOINED => {
                 let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
-                // 仅 host 端发起连接。
                 if role == wire::role::HOST {
                     self.peer_present = true;
                     match self.transport {
@@ -265,6 +379,7 @@ impl Coordinator {
 
             t0 if t0 == wire::signal::PEER_LEFT => {
                 self.state.log(t("手机已断开", "Phone disconnected"));
+                self.stop_screen_capture("");
                 self.state.set_connected_device("");
                 self.webrtc.close().await;
                 self.peer_present = false;
@@ -288,7 +403,10 @@ impl Coordinator {
             ServerEvent::State(running, port) => {
                 self.state.set_server_state(running, port);
             }
-            ServerEvent::Error(e) => self.state.log(format!("{}: {}", t("服务器错误", "Server error"), e)),
+            ServerEvent::Error(e) => {
+                self.state
+                    .log(format!("{}: {}", t("服务器错误", "Server error"), e))
+            }
             ServerEvent::Log(l) => self.state.log(l),
         }
     }
@@ -308,6 +426,13 @@ impl Coordinator {
             WebRtcEvent::ChannelOpen => {
                 self.state.set_status("已连接", "Connected", true);
                 self.focus.ensure_current_delivered();
+                // 断连恢复后重建屏幕采集。
+                if let Some((ref sid, vp_w, vp_h)) = self.pending_screen_session.take() {
+                    if !sid.is_empty() {
+                        self.state.log(format!("[screen] reconnect restore: {}", sid));
+                        self.start_screen_capture(sid, vp_w, vp_h);
+                    }
+                }
             }
             WebRtcEvent::Text(text) => {
                 self.injector.inject(&text);
@@ -320,6 +445,33 @@ impl Coordinator {
             WebRtcEvent::Device(d) => {
                 self.state.set_connected_device(&d);
                 self.state.log(format!("{}: {}", t("设备", "Device"), d));
+            }
+            // MARK: 远程窗口画面（2.0）
+            WebRtcEvent::ScreenStart(sid, w, h) => {
+                self.start_screen_capture(&sid, w, h);
+            }
+            WebRtcEvent::ScreenStop(sid) => {
+                self.stop_screen_capture(&sid);
+            }
+            WebRtcEvent::Viewport(sid, x, y, w, h) => {
+                if sid == self.screen_session_id {
+                    self.capturer.set_viewport(x, y, w, h);
+                }
+            }
+            WebRtcEvent::PointerDown(sid, x, y) => {
+                if sid == self.screen_session_id {
+                    self.pointer.mouse_down(x, y);
+                }
+            }
+            WebRtcEvent::PointerUp(sid, x, y) => {
+                if sid == self.screen_session_id {
+                    self.pointer.mouse_up(x, y);
+                }
+            }
+            WebRtcEvent::PointerScroll(sid, dx, dy) => {
+                if sid == self.screen_session_id {
+                    self.pointer.scroll(dx, dy);
+                }
             }
             WebRtcEvent::Log(l) => self.state.log(l),
         }
@@ -341,8 +493,124 @@ impl Coordinator {
                 }))
                 .await;
             }
+            FocusEvent::SessionInputLost(id) => {
+                self.state.log(format!("session input lost: {}", id));
+                self.send_peer_message(&json!({
+                    wire::key::TYPE: wire::msg::SESSION_INPUT_LOST,
+                    "sessionId": id,
+                }))
+                .await;
+            }
         }
     }
+
+    // ---- 窗口采集器事件 ----
+
+    async fn on_capturer(&mut self, ev: CapturerEvent) {
+        match ev {
+            CapturerEvent::Frame(w, h, data, ts_ns) => {
+                self.webrtc
+                    .push_video_frame(&data, w as i32, h as i32, ts_ns)
+                    .await;
+            }
+            CapturerEvent::Thumbnail(jpeg) => {
+                if !self.screen_session_id.is_empty() {
+                    let frame = screen_thumb_frame(&self.screen_session_id, &jpeg);
+                    self.webrtc.send_thumb(&frame).await;
+                }
+            }
+            CapturerEvent::Meta(win_w, win_h, vp_x, vp_y, vp_w, vp_h, scale) => {
+                if self.screen_session_id.is_empty() {
+                    return;
+                }
+                let applied = (vp_x, vp_y, vp_w, vp_h);
+                if applied != self.last_applied_viewport {
+                    self.last_applied_viewport = applied;
+                    let _ = self.webrtc
+                        .send_message(&json!({
+                            wire::key::TYPE: wire::msg::SCREEN_META,
+                            "sessionId": self.screen_session_id,
+                            "win": { "w": win_w, "h": win_h, "scale": scale },
+                            "applied": {
+                                "x": vp_x, "y": vp_y, "w": vp_w, "h": vp_h,
+                            },
+                        }))
+                        .await;
+                }
+            }
+            CapturerEvent::WindowReady(frame, scale) => {
+                // 从采集器的共享状态中获取真实的捕获窗口 HWND。
+                let hwnd = self.capturer.capture_hwnd().unwrap_or(
+                    windows::Win32::Foundation::HWND(std::ptr::null_mut()),
+                );
+                self.pointer.update_window(
+                    hwnd,
+                    frame,
+                    ((frame.bottom - frame.top) as f64 / scale) as i32,
+                );
+            }
+            CapturerEvent::Error(msg) => {
+                if !self.screen_session_id.is_empty() {
+                    self.state.log(format!("[screen] error: {}", msg));
+                    let _ = self.webrtc
+                        .send_message(&json!({
+                            wire::key::TYPE: wire::msg::SCREEN_ERROR,
+                            "sessionId": self.screen_session_id,
+                            "message": msg,
+                        }))
+                        .await;
+                }
+            }
+            CapturerEvent::Log(l) => self.state.log(format!("[screen] {}", l)),
+        }
+    }
+
+    // ---- 远程窗口画面（2.0）----
+
+    fn start_screen_capture(&mut self, session_id: &str, vp_w: i32, vp_h: i32) {
+        // 从会话列表查找对应会话。
+        let (app, title) = {
+            let sessions_snapshot = self.state.read(|s| {
+                s.sessions
+                    .iter()
+                    .find(|sess| sess.id == session_id)
+                    .map(|sess| (sess.app.clone(), sess.title.clone()))
+            });
+            match sessions_snapshot {
+                Some(pair) => pair,
+                None => {
+                    self.state
+                        .log(format!("[screen] 未找到会话: {}", session_id));
+                    return;
+                }
+            }
+        };
+
+        self.screen_session_id = session_id.to_string();
+        self.last_applied_viewport = (0, 0, 0, 0);
+        self.state
+            .log(format!("[screen] start: {} - {}", app, title));
+        self.capturer.start(
+            session_id,
+            &app,
+            &title,
+            vp_w.max(1),
+            vp_h.max(1),
+            self.settings.screen_fps.value(),
+        );
+    }
+
+    fn stop_screen_capture(&mut self, session_id: &str) {
+        if !session_id.is_empty() && session_id != self.screen_session_id {
+            return;
+        }
+        self.state.log("[screen] stop".to_string());
+        self.capturer.stop();
+        self.screen_session_id.clear();
+        self.last_applied_viewport = (0, 0, 0, 0);
+    }
+
+    // ---- 会话消息 ----
 
     async fn send_session(&self, session: &FocusSession) {
         self.send_peer_message(&json!({
@@ -355,8 +623,6 @@ impl Coordinator {
         }))
         .await;
     }
-
-    // ---- 业务消息收发 ----
 
     /// 桌面 → 手机。按传输模式选择 DataChannel 或信令中继。
     async fn send_peer_message(&self, obj: &Value) {
@@ -401,4 +667,15 @@ impl Coordinator {
 
 fn device_name() -> String {
     std::env::var("COMPUTERNAME").unwrap_or_else(|_| "Windows".to_string())
+}
+
+/// 缩略图二进制帧：`[2 字节大端 sessionId 长度][sessionId UTF-8][JPEG]`。
+fn screen_thumb_frame(session_id: &str, jpeg: &[u8]) -> Vec<u8> {
+    let id_bytes = session_id.as_bytes();
+    let len = (id_bytes.len() as u16).to_be_bytes();
+    let mut data = Vec::with_capacity(2 + id_bytes.len() + jpeg.len());
+    data.extend_from_slice(&len);
+    data.extend_from_slice(id_bytes);
+    data.extend_from_slice(jpeg);
+    data
 }

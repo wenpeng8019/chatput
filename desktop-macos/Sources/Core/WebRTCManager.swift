@@ -85,7 +85,7 @@ final class WebRTCManager: NSObject {
             self.thumbChannel = tc
         }
 
-        // 预协商一条 sendonly 视频轨：开启远程画面前轨道静默，避免中途重协商。
+        // 预协商一条 sendonly 视频轨：开启远程桌面前轨道静默，避免中途重协商。
         let source = WebRTCManager.factory.videoSource()
         let track = WebRTCManager.factory.videoTrack(with: source, trackId: "screen0")
         self.videoSource = source

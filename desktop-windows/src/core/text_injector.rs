@@ -11,8 +11,8 @@ use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
-    VIRTUAL_KEY, VK_A, VK_BACK, VK_CONTROL, VK_DOWN, VK_END, VK_HOME, VK_LEFT, VK_RETURN,
-    VK_RIGHT, VK_SHIFT, VK_UP, VK_V,
+    VIRTUAL_KEY, VK_A, VK_BACK, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_LEFT,
+    VK_RETURN, VK_RIGHT, VK_SHIFT, VK_UP, VK_V,
 };
 
 /// 支持的操作按键，取值与手机端协议一致。
@@ -27,6 +27,8 @@ pub enum Action {
     CursorRight,
     CursorUp,
     CursorDown,
+    /// Esc 键（方向模式下退格按钮发送）。
+    Escape,
 }
 
 impl Action {
@@ -41,12 +43,12 @@ impl Action {
             "cursorRight" => Some(Action::CursorRight),
             "cursorUp" => Some(Action::CursorUp),
             "cursorDown" => Some(Action::CursorDown),
+            "escape" | "esc" => Some(Action::Escape),
             _ => None,
         }
     }
 }
 
-#[derive(Default)]
 pub struct TextInjector;
 
 impl TextInjector {
@@ -94,19 +96,17 @@ impl TextInjector {
             Action::CursorRight => tap_key(VK_RIGHT, &[]),
             Action::CursorUp => self.move_vertically(true),
             Action::CursorDown => self.move_vertically(false),
+            Action::Escape => tap_key(VK_ESCAPE, &[]),
         }
     }
 
-    /// 光标上/下移。Windows 原生输入框无统一的"首/末行"探测 API（与 macOS AX 不同），
-    /// 因此这里采用与系统一致的方向键行为；边界策略留待后续可选增强。
+    /// 光标上/下移。
     fn move_vertically(&self, up: bool) {
         if up {
             tap_key(VK_UP, &[]);
         } else {
             tap_key(VK_DOWN, &[]);
         }
-        // 引用以避免未使用告警。
-        let _ = (VK_HOME, VK_END);
     }
 }
 

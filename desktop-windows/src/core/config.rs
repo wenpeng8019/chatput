@@ -11,6 +11,18 @@ pub mod timing {
     pub const WINDOW_EXISTENCE_POLL: Duration = Duration::from_millis(1000);
     /// 粘贴完成后还原剪贴板的延迟。
     pub const CLIPBOARD_RESTORE: Duration = Duration::from_millis(300);
+    /// 网络变化检测轮询间隔。
+    pub const NETWORK_MONITOR_POLL: Duration = Duration::from_millis(2000);
+    /// 网络变化后重启链路的缓冲延迟。
+    pub const NETWORK_CHANGE_DEBOUNCE: Duration = Duration::from_millis(1000);
+    /// 信令断开后自动重连延迟。
+    pub const RECONNECT_DELAY: Duration = Duration::from_secs(3);
+    /// 配置变更后重启链路前的缓冲延迟。
+    pub const RESTART_DEBOUNCE: Duration = Duration::from_millis(300);
+    /// 缩略图发送间隔。
+    pub const THUMB_INTERVAL: Duration = Duration::from_secs(1);
+    /// 缩略图最大边长。
+    pub const THUMB_MAX_EDGE: u32 = 240;
 }
 
 /// 各类容量上限。

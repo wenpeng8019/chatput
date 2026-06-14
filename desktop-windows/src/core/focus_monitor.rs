@@ -35,6 +35,8 @@ pub struct FocusSession {
 pub enum FocusEvent {
     Session(FocusSession),
     SessionClosed(String),
+    /// 桌面窗口仍在但输入控件暂时不可用（如 AI 助手弹出菜单遮住了输入框）。
+    SessionInputLost(String),
 }
 
 /// 焦点监控器：内部起一个带消息循环的线程跑 WinEventHook，

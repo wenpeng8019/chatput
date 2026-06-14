@@ -23,6 +23,9 @@ futures-util = "0.3"
 # WebRTC（桌面端作为 HOST）
 webrtc = "0.11"
 
+# Bytes（配合 webrtc-rs 数据通道发送）
+bytes = "1"
+
 # 信令 WebSocket（客户端 + 内置服务器）
 tokio-tungstenite = "0.21"
 
@@ -42,6 +45,9 @@ winreg = "0.52"
 # 日志
 log = "0.4"
 
+# 图像编码（缩略图 JPEG）
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+
 [dependencies.windows]
 version = "0.58"
 features = [
@@ -49,6 +55,7 @@ features = [
     "Win32_Security",
     "Win32_UI_Accessibility",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
     "Win32_UI_Controls",
@@ -61,6 +68,7 @@ features = [
     "Win32_System_Ole",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Dwm",
+    "Win32_Media_MediaFoundation",
     "Win32_Globalization",
     "Win32_NetworkManagement_IpHelper",
     "Win32_NetworkManagement_Ndis",

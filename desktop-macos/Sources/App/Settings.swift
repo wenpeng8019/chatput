@@ -150,7 +150,7 @@ final class AppSettings: ObservableObject {
         static let screenFPS = "screen.fps"
         static let screenCodec = "screen.codec"
         static let screenScale = "screen.scale"
-        static let debugHotZones = "debug.hotZones"
+
         static let disableDynamicBitrate = "screen.disableDynamicBitrate"
         static let screenQuality = "screen.quality"
         static let cursorBoundary = "cursor.boundaryMode"
@@ -186,11 +186,7 @@ final class AppSettings: ObservableObject {
     @Published var language: AppLanguage {
         didSet { defaults.set(language.rawValue, forKey: Key.language) }
     }
-    /// 拖动光标到首/末行边界时的行为。
-    /// 调试：用半透明颜色显示所有隐藏热区。
-    @Published var debugHotZones: Bool {
-        didSet { defaults.set(debugHotZones, forKey: Key.debugHotZones) }
-    }
+
     /// 禁用 WebRTC 动态码率调整，直接以目标码率编码（默认关闭=自适应）。
     @Published var disableDynamicBitrate: Bool {
         didSet { defaults.set(disableDynamicBitrate, forKey: Key.disableDynamicBitrate) }
@@ -244,7 +240,7 @@ final class AppSettings: ObservableObject {
         defaults.set(normalizedExternalURL, forKey: Key.externalURL)
         let lang = defaults.string(forKey: Key.language) ?? AppLanguage.system.rawValue
         language = AppLanguage(rawValue: lang) ?? .system
-        debugHotZones = defaults.bool(forKey: Key.debugHotZones)
+
         disableDynamicBitrate = defaults.bool(forKey: Key.disableDynamicBitrate)
         let scaleRaw = defaults.string(forKey: Key.screenScale) ?? ScreenScale.p100.rawValue
         screenScale = ScreenScale(rawValue: scaleRaw) ?? .p100
