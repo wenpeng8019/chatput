@@ -199,6 +199,43 @@ async fn handle_message(text: &str, id: ClientId, shared: &Arc<Mutex<Shared>>) {
             .await;
         }
 
+        t if t == wire::signal::RESTORE_ROOM => {
+            // 用客户端持久化的 roomId/token 重建房间，使重启后手机无需重新扫码。
+            // 缺省时退化为新建房间。对齐 mac SignalingServer.swift。
+            let room_id = obj
+                .get("roomId")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| gen_id(3));
+            let token = obj
+                .get("token")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| gen_id(8));
+            {
+                let mut g = shared.lock().await;
+                // 若同 id 旧房间残留（陈旧），先移除。
+                g.rooms.remove(&room_id);
+                g.rooms.insert(
+                    room_id.clone(),
+                    Room {
+                        token: token.clone(),
+                        host: Some(id),
+                        guest: None,
+                    },
+                );
+                g.client_room.insert(id, room_id.clone());
+            }
+            send_to(
+                shared,
+                id,
+                &json!({"type": wire::signal::ROOM_CREATED, "roomId": room_id, "token": token}),
+            )
+            .await;
+        }
+
         t if t == wire::signal::JOIN_ROOM => {
             let room_id = obj.get("roomId").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let token = obj.get("token").and_then(|v| v.as_str()).unwrap_or("").to_string();

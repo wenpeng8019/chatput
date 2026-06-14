@@ -111,6 +111,17 @@ impl AppState {
     }
 
     pub fn log(&self, line: String) {
+        // 同步写入 %APPDATA%\Chatput\runtime.log，便于跨会话/实时排查（E2E 调试）。
+        if let Ok(dir) = std::env::var("APPDATA") {
+            let path = std::path::Path::new(&dir).join("Chatput").join("runtime.log");
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                use std::io::Write;
+                let _ = writeln!(f, "[{:?}] {}", std::time::SystemTime::now(), line);
+            }
+        }
         self.write(|s| {
             s.log_lines.push_back(line);
             while s.log_lines.len() > config::limit::LOG_LINES {

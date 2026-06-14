@@ -20,11 +20,11 @@ embed-resource = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
 futures-util = "0.3"
 
-# WebRTC（桌面端作为 HOST）
-webrtc = "0.11"
-
-# Bytes（配合 webrtc-rs 数据通道发送）
-bytes = "1"
+# WebRTC（桌面端作为 HOST）—— livekit libwebrtc 绑定（真 Google libwebrtc）。
+# 喂原始帧（I420/NV12），内部自动编码（H.264）+ 拥塞控制 + PLI→关键帧 + 码率自适应，
+# 与 macOS（ScreenCaptureKit + RTCVideoSource）行为完全一致。
+# Windows MSVC 需 .cargo/config.toml 的 crt-static rustflags 才能链接预编译原生库。
+libwebrtc = "0.3.36"
 
 # 信令 WebSocket（客户端 + 内置服务器）
 tokio-tungstenite = "0.21"
@@ -68,6 +68,7 @@ features = [
     "Win32_System_Ole",
     "Win32_Graphics_Gdi",
     "Win32_Graphics_Dwm",
+    "Win32_Storage_Xps",
     "Win32_Media_MediaFoundation",
     "Win32_Globalization",
     "Win32_NetworkManagement_IpHelper",

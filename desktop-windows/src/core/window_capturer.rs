@@ -14,22 +14,24 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Instant;
 
-use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Gdi::{
-    BitBlt, CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
-    GetDC, GetDeviceCaps, GetDIBits, ReleaseDC, SelectObject, SRCCOPY,
+    CreateCompatibleBitmap, CreateCompatibleDC, DeleteDC, DeleteObject,
+    GetDC, GetDeviceCaps, GetDIBits, ReleaseDC, SelectObject,
     BITMAPINFO, BITMAPINFOHEADER, DIB_RGB_COLORS, HDC, HBITMAP, LOGPIXELSX,
 };
+use windows::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_EXTENDED_FRAME_BOUNDS};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GetWindowRect, GetWindowTextLengthW, SendMessageW,
+    EnumWindows, GetWindowRect, GetWindowTextLengthW,
     GetWindowTextW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
 };
+// PrintWindow + PRINT_WINDOW_FLAGS 在 windows crate 的 Win32::Storage::Xps 模块。
+use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
 
-// WM_PRINT 消息使用的 PRF (Print Render Format) 标志。
-const WM_PRINT: u32 = 0x0318;
-const PRF_CLIENT: usize = 0x0004;     // 客户区
-const PRF_CHILDREN: usize = 0x0010;   // 可见子窗口
-const PRF_ERASEBKGND: usize = 0x0008; // 先擦除背景
+// PrintWindow 标志：PW_RENDERFULLCONTENT（Win8.1+）让 DWM 渲染包含
+// DirectComposition / GPU 合成的完整窗口内容（Chrome / Electron / VS Code 等），
+// 且只取该窗口本身，不含屏幕其它内容——对齐 macOS ScreenCaptureKit 的「按窗口隔离」语义。
+const PW_RENDERFULLCONTENT: PRINT_WINDOW_FLAGS = PRINT_WINDOW_FLAGS(0x0000_0002);
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
     PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE,
@@ -79,27 +81,28 @@ impl CaptureShared {
 struct CaptureState {
     hwnd: HWND,
     session_id: String,
-    /// 窗口像素尺寸。
+    /// 可见窗口像素尺寸（已剔除 DWM 不可见边框）。
     pixel_w: i32,
     pixel_h: i32,
     /// backing scale（DPI / 96）。
     scale: f64,
-    /// 窗口屏幕坐标（用于 BitBlt 兜底）。
-    win_left: i32,
-    win_top: i32,
+    /// 全窗（含 DWM 不可见边框）物理像素尺寸，= PrintWindow 渲染的位图尺寸。
+    full_pw: i32,
+    full_ph: i32,
+    /// 可见区域在全窗位图中的物理像素偏移（DWM 不可见边框宽度）。
+    crop_x: i32,
+    crop_y: i32,
     /// 帧间隔。
     frame_interval_ms: u64,
     /// GDI 资源：内存 DC + 兼容位图。
     mem_dc: HDC,
     mem_bmp: HBITMAP,
-    /// 全窗 RGBA 像素缓存（用于视口裁剪）。
+    /// 可见窗口 RGBA 像素缓存（用于视口裁剪）。
     full_rgba: Vec<u8>,
+    /// 全窗 RGBA 暂存（PrintWindow 渲染结果，含不可见边框，裁剪前）。
+    scratch_rgba: Vec<u8>,
     /// 上次缩略图时间。
     last_thumb: Instant,
-    /// 诊断：首帧屏幕 (0,0) 采样完成标志。
-    diag_done: bool,
-    /// 待输出的诊断消息。
-    pending_diag: Option<String>,
 }
 
 /// 窗口采集器：内部起一个线程做定时采集。
@@ -194,19 +197,53 @@ impl WindowCapturer {
                 d
             };
             let scale = dpi as f64 / 96.0;
-            let pixel_w = ((rect.right - rect.left) as f64 * scale).round() as i32;
-            let pixel_h = ((rect.bottom - rect.top) as f64 * scale).round() as i32;
 
-            if pixel_w < 2 || pixel_h < 2 {
+            // GetWindowRect 在 Win10/11 含 DWM「不可见 resize 边框」（左右下各约 7px，
+            // 透明，PrintWindow 渲染后表现为白边）。用 DWMWA_EXTENDED_FRAME_BOUNDS 取
+            // 真实可见边界，裁掉该边框——对齐 macOS ScreenCaptureKit 的窗口边界。
+            //
+            // 实测校正：DWMWA_EXTENDED_FRAME_BOUNDS 相对 PrintWindow 位图水平整体偏左 1px、
+            // 底部偏小 1px（用户肉眼校验：未校正时左侧残留 1px 白边、底部缺 1px 内容）。
+            // 故对 DWM 矩形 left/right/bottom 各 +1px。仅在成功取得 DWM 边界时校正；
+            // 回退 GetWindowRect 时不校正（inset 全 0）。
+            let dwm = match extended_frame_bounds(hwnd) {
+                Some(r) => RECT {
+                    left: r.left + 1,
+                    top: r.top,
+                    right: r.right + 1,
+                    bottom: r.bottom + 1,
+                },
+                None => rect,
+            };
+            let inset_l = (dwm.left - rect.left).max(0);
+            let inset_t = (dwm.top - rect.top).max(0);
+            let inset_r = (rect.right - dwm.right).max(0);
+            let inset_b = (rect.bottom - dwm.bottom).max(0);
+
+            // 全窗（含边框）物理尺寸 = PrintWindow 渲染的位图尺寸。
+            let full_pw = ((rect.right - rect.left) as f64 * scale).round() as i32;
+            let full_ph = ((rect.bottom - rect.top) as f64 * scale).round() as i32;
+            // 边框物理像素偏移。
+            let crop_x = (inset_l as f64 * scale).round() as i32;
+            let crop_y = (inset_t as f64 * scale).round() as i32;
+            let crop_r = (inset_r as f64 * scale).round() as i32;
+            let crop_b = (inset_b as f64 * scale).round() as i32;
+            // 可见窗口物理尺寸（下游全部以此为「窗口」）。
+            let pixel_w = (full_pw - crop_x - crop_r).max(2);
+            let pixel_h = (full_ph - crop_y - crop_b).max(2);
+
+            if full_pw < 2 || full_ph < 2 {
                 shared.running.store(false, Ordering::SeqCst);
                 let _ = tx.send(CapturerEvent::Error("窗口太小".to_string()));
                 return;
             }
 
-            let _ = tx.send(CapturerEvent::WindowReady(rect, scale));
+            // 指针坐标以可见边界（dwm rect）为原点，保证点击不偏移。
+            let _ = tx.send(CapturerEvent::WindowReady(dwm, scale));
             let _ = tx.send(CapturerEvent::Log(format!(
-                "窗口采集开始：{} - {} [{}x{}] scale={:.1}",
-                app, title, pixel_w, pixel_h, scale
+                "窗口采集开始：{} - {} 可见[{}x{}] 全窗[{}x{}] 边框(l{} t{} r{} b{}) scale={:.1}",
+                app, title, pixel_w, pixel_h, full_pw, full_ph,
+                crop_x, crop_y, crop_r, crop_b, scale
             )));
 
             // 创建 GDI 资源。
@@ -218,7 +255,7 @@ impl WindowCapturer {
                 unsafe { ReleaseDC(hwnd, screen_dc) };
                 return;
             }
-            let mem_bmp = unsafe { CreateCompatibleBitmap(screen_dc, pixel_w, pixel_h) };
+            let mem_bmp = unsafe { CreateCompatibleBitmap(screen_dc, full_pw, full_ph) };
             if mem_bmp.is_invalid() {
                 shared.running.store(false, Ordering::SeqCst);
                 let _ = tx.send(CapturerEvent::Error("创建位图失败".to_string()));
@@ -235,15 +272,16 @@ impl WindowCapturer {
                 pixel_w,
                 pixel_h,
                 scale,
-                win_left: rect.left,
-                win_top: rect.top,
+                full_pw,
+                full_ph,
+                crop_x,
+                crop_y,
                 frame_interval_ms,
                 mem_dc,
                 mem_bmp,
                 full_rgba: vec![0u8; (pixel_w * pixel_h * 4) as usize],
+                scratch_rgba: vec![0u8; (full_pw * full_ph * 4) as usize],
                 last_thumb: Instant::now(),
-                diag_done: false,
-                pending_diag: None,
             };
 
             let mut skip_count: u64 = 0;
@@ -261,10 +299,6 @@ impl WindowCapturer {
                         if skip_count > 0 || frame_count == 0 {
                             let nz = frame.data.chunks(4).take(2000)
                                 .filter(|p| p[0] != 0 || p[1] != 0 || p[2] != 0).count();
-                            // 输出之前捕获的诊断消息。
-                            if let Some(diag) = state.pending_diag.take() {
-                                let _ = tx.send(CapturerEvent::Log(diag));
-                            }
                             let _ = tx.send(CapturerEvent::Log(format!(
                                 "frame OK: {}x{} ({} bytes) pixel_sample={}/2000 non-zero",
                                 frame.w, frame.h, frame.data.len(), nz,
@@ -355,6 +389,25 @@ struct CapturedFrame {
     ts_ns: i64,
 }
 
+/// 取窗口的 DWM 扩展边界（真实可见区域，已剔除不可见 resize 边框）。
+/// 失败（如旧系统/无 DWM）时返回 None，调用方回退用 GetWindowRect。
+fn extended_frame_bounds(hwnd: HWND) -> Option<RECT> {
+    let mut r = RECT::default();
+    let ok = unsafe {
+        DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            &mut r as *mut RECT as *mut _,
+            std::mem::size_of::<RECT>() as u32,
+        )
+    };
+    if ok.is_ok() {
+        Some(r)
+    } else {
+        None
+    }
+}
+
 /// 采集一帧窗口画面，按共享视口裁剪子区域。
 fn capture_frame(
     state: &mut CaptureState,
@@ -368,54 +421,37 @@ fn capture_frame(
         return Ok(None);
     }
 
-    let w = state.pixel_w;
+    let w = state.pixel_w;       // 可见窗口
     let h = state.pixel_h;
-    let size = (w * h * 4) as usize;
-    if state.full_rgba.len() != size {
-        state.full_rgba.resize(size, 0);
+    let fw = state.full_pw;      // 全窗（含边框）
+    let fh = state.full_ph;
+    let vis_size = (w * h * 4) as usize;
+    if state.full_rgba.len() != vis_size {
+        state.full_rgba.resize(vis_size, 0);
+    }
+    let full_size = (fw * fh * 4) as usize;
+    if state.scratch_rgba.len() != full_size {
+        state.scratch_rgba.resize(full_size, 0);
     }
 
-    // 步骤 1：尝试 WM_PRINT（适用于标准 Win32 控件窗口）。
-    let wm_print_ok = unsafe {
-        SendMessageW(
-            state.hwnd,
-            WM_PRINT,
-            WPARAM(state.mem_dc.0 as usize),
-            LPARAM((PRF_CLIENT | PRF_CHILDREN | PRF_ERASEBKGND) as isize),
-        ).0 != 0
+    // 用 PrintWindow + PW_RENDERFULLCONTENT 采集**单个窗口**的完整内容。
+    // 该标志让 DWM 渲染包含 DirectComposition / GPU 合成的内容（Chrome / Electron /
+    // VS Code 等），且只取该窗口，绝不含屏幕其它内容或遮挡窗口。
+    // 不再回退到屏幕 BitBlt：屏幕 BitBlt 会抓到整屏/被遮挡内容，违背「只看 focus 窗口」需求。
+    let ok = unsafe {
+        PrintWindow(state.hwnd, state.mem_dc, PW_RENDERFULLCONTENT).as_bool()
     };
-
-    // 步骤 2：WM_PRINT 不支持 GPU 加速窗口，回退到屏幕 BitBlt。
-    if !wm_print_ok {
-        let screen_dc = unsafe { GetDC(HWND(std::ptr::null_mut())) };
-        if screen_dc.is_invalid() {
-            return Ok(None);
-        }
-        // 诊断：同时从屏幕 (0,0) 取 50x50 验证 BitBlt 管线。
-        if !state.diag_done {
-            state.diag_done = true;
-            if let Some(nz) = diag_screen_zero(screen_dc) {
-                let msg = format!("diag screen(0,0): {}/2500 non-zero pixels", nz);
-                // 暂存在 state 里，在帧日志中输出。
-                state.pending_diag = Some(msg);
-            }
-        }
-        unsafe {
-            let _ = BitBlt(
-                state.mem_dc, 0, 0, w, h,
-                screen_dc, state.win_left, state.win_top,
-                SRCCOPY,
-            );
-            ReleaseDC(HWND(std::ptr::null_mut()), screen_dc);
-        }
+    if !ok {
+        // 个别受保护/硬件叠加窗口可能采集失败；跳过本帧而不是泄露整屏。
+        return Ok(None);
     }
 
-    // 步骤 3：从内存 DC 提取 BGRA 像素。
+    // 从内存 DC 提取全窗 BGRA 像素到暂存（含 DWM 不可见边框）。
     let mut bmi = BITMAPINFO {
         bmiHeader: BITMAPINFOHEADER {
             biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-            biWidth: w,
-            biHeight: -h, // top-down
+            biWidth: fw,
+            biHeight: -fh, // top-down
             biPlanes: 1,
             biBitCount: 32,
             biCompression: 0, // BI_RGB
@@ -429,13 +465,28 @@ fn capture_frame(
     };
     let scan_lines = unsafe {
         GetDIBits(
-            state.mem_dc, state.mem_bmp, 0, h as u32,
-            Some(state.full_rgba.as_mut_ptr() as *mut _),
+            state.mem_dc, state.mem_bmp, 0, fh as u32,
+            Some(state.scratch_rgba.as_mut_ptr() as *mut _),
             &mut bmi, DIB_RGB_COLORS,
         )
     };
     if scan_lines == 0 {
         return Ok(None);
+    }
+
+    // 裁掉 DWM 不可见边框：从全窗暂存 (fw×fh) 取可见区 (w×h) 到 full_rgba。
+    let crop_x = state.crop_x as usize;
+    let crop_y = state.crop_y as usize;
+    let fw_us = fw as usize;
+    let row_bytes = (w as usize) * 4;
+    for row in 0..h as usize {
+        let src_start = ((crop_y + row) * fw_us + crop_x) * 4;
+        let dst_start = row * row_bytes;
+        if src_start + row_bytes > state.scratch_rgba.len() {
+            break;
+        }
+        state.full_rgba[dst_start..dst_start + row_bytes]
+            .copy_from_slice(&state.scratch_rgba[src_start..src_start + row_bytes]);
     }
 
     let scale = state.scale;
@@ -633,33 +684,6 @@ fn window_title(hwnd: HWND) -> String {
     }
 }
 
-/// 从屏幕 (0,0) 取 50x50 像素验证 DC + BitBlt 管线正常。
-fn diag_screen_zero(screen_dc: HDC) -> Option<u32> {
-    unsafe {
-        let diag_bmp = CreateCompatibleBitmap(screen_dc, 50, 50);
-        if diag_bmp.is_invalid() { return None; }
-        let diag_dc = CreateCompatibleDC(screen_dc);
-        let prev = SelectObject(diag_dc, diag_bmp);
-        let _ = BitBlt(diag_dc, 0, 0, 50, 50, screen_dc, 0, 0, SRCCOPY);
-        let mut buf = vec![0u8; 50 * 50 * 4];
-        let mut bmi = BITMAPINFO {
-            bmiHeader: BITMAPINFOHEADER {
-                biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
-                biWidth: 50, biHeight: -50, biPlanes: 1, biBitCount: 32,
-                biCompression: 0, biSizeImage: 0,
-                biXPelsPerMeter: 0, biYPelsPerMeter: 0,
-                biClrUsed: 0, biClrImportant: 0,
-            },
-            bmiColors: [std::mem::zeroed(); 1],
-        };
-        GetDIBits(diag_dc, diag_bmp, 0, 50, Some(buf.as_mut_ptr() as *mut _), &mut bmi, DIB_RGB_COLORS);
-        let nz = buf.chunks(4).filter(|p| p[0] != 0 || p[1] != 0 || p[2] != 0).count() as u32;
-        SelectObject(diag_dc, prev);
-        DeleteDC(diag_dc);
-        DeleteObject(diag_bmp);
-        Some(nz)
-    }
-}
 
 fn process_exe_name(pid: u32) -> Option<String> {
     unsafe {
